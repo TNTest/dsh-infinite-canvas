@@ -1,20 +1,22 @@
 # dsh-infinite-canvas
 
+[English](README.md) | [简体中文](README.zh-CN.md)
+
 Brings [Infinite Canvas](https://github.com/tigerowo/infinite-canvas) into DeepSeek Harness:
 
-- **设置页 / Settings only** — everything lives in Settings → 无限画布: the deployment URL, the
+- **Settings only** — everything lives in Settings → Infinite Canvas: the deployment URL, the
   local agent URL, auto start, the connect token, live connection state, the supervisor log, a
-  one-click 「打开画布」, and the account's canvas list (also the token check). There is no
+  one-click “Open canvas”, and the account's canvas list (also the token check). There is no
   workspace panel: the canvas itself is a page in your browser.
-- **自动启动本地 Agent** — the Host half starts and supervises
+- **Automatic local agent startup** — the Host half starts and supervises
   `npx -y @tigerowo/canvas-agent@latest` itself: no terminal, no second install. It waits for
   the service to listen, restarts it after a crash (up to 3 consecutive attempts), and stops it
   when the plugin unloads. `autoStart: false` in the row config turns that off.
-- **官方 MCP 工具** — the official `@tigerowo/canvas-agent mcp` bridge over stdio, so the
+- **Official MCP tools** — the official `@tigerowo/canvas-agent mcp` bridge over stdio, so the
   model calls canvas tools as `mcp__infinite-canvas__<tool>`.
-- **连接状态工具** — `infinite_canvas_status` tells the model the canvas URL, whether the
+- **Connection status tool** — `infinite_canvas_status` tells the model the canvas URL, whether the
   agent is up, whether a canvas is connected, and what to fix when it is not.
-- **画布工具（列表 / 新建）** — `infinite_canvas_projects` lists the deployment's canvases and,
+- **Canvas tools (list / create)** — `infinite_canvas_projects` lists the deployment's canvases and,
   when the person asks for one, creates a new canvas; the client half then switches the single
   canvas tab to it. No canvas id is ever stored.
 
@@ -24,14 +26,14 @@ Brings [Infinite Canvas](https://github.com/tigerowo/infinite-canvas) into DeepS
 2. Nothing else. On activation the plugin starts the agent, which prints its address and
    `Connect token` and saves the token to `~/.infinite-canvas/codex-agent.json`. Nothing in
    this bundle stores that token; the settings page only asks for it to hand it to the canvas page.
-3. A canvas page connected to that agent — 「打开画布」 in Settings opens it for you in a browser
+3. A canvas page connected to that agent — “Open canvas” in Settings opens it for you in a browser
    tab: the deployment's canvas list with `agentUrl` and `agentToken` appended as a hash, the
    same handshake as `canvas-agent open <url> <browser>`. Nothing is embedded: a cross-site
    iframe cannot carry the site's login session, so an embedded canvas stays logged out and
    never reaches the agent.
 
 The first start downloads `@tigerowo/canvas-agent` (and `@openai/codex`), which can take a
-while; Settings shows 「正在启动本地 Agent…」 until the service answers.
+while; Settings shows “Starting local agent…” until the service answers.
 
 ## Canvases: list, create, and hand over to the browser
 
@@ -78,11 +80,11 @@ user names a canvas (match title or id); create only when the user asked for a n
 
 | Value | Default | Change it |
 | --- | --- | --- |
-| Canvas deployment | `https://infic.transiglobal.com` | Settings → 无限画布, or `canvasBaseUrl` in the row config |
+| Canvas deployment | `https://infic.transiglobal.com` | Settings → Infinite Canvas, or `canvasBaseUrl` in the row config |
 | Canvas to open | always the deployment canvas list `/canvas` | nothing to set — no canvas id is stored |
-| Local agent | `http://127.0.0.1:3210` | Settings → 无限画布, or `agentUrl` |
-| Put the agent credentials in the opened link | on | Settings → 无限画布, or `embedCredentials` |
-| Start the agent with Harness | on | Settings → 无限画布, or `autoStart` |
+| Local agent | `http://127.0.0.1:3210` | Settings → Infinite Canvas, or `agentUrl` |
+| Put the agent credentials in the opened link | on | Settings → Infinite Canvas, or `embedCredentials` |
+| Start the agent with Harness | on | Settings → Infinite Canvas, or `autoStart` |
 | Agent command / arguments | `npx -y @tigerowo/canvas-agent@latest` | `agentCommand`, `agentArgs` in the row config |
 | MCP server namespace | `infinite-canvas` | `cordis.patch.yml` (`serverName`) |
 | Multi-canvas client id | unset | `env.CANVAS_AGENT_CLIENT_ID` in `cordis.patch.yml` |
@@ -104,7 +106,7 @@ layer survives upgrades. The agent's own console output is kept at
 | Phase | Meaning |
 | --- | --- |
 | `starting` | a child was spawned, waiting for it to answer `GET /config` |
-| `running` | our child answers; 「停止 Agent」 is offered |
+| `running` | our child answers; “Stop agent” is offered |
 | `external` | something else already listens on the agent URL, so nothing is spawned |
 | `stopped` | stopped from Settings; the watchdog leaves it alone until you start it again |
 | `exited` / `error` | the child died or never answered; the watchdog retries (max 3) |
@@ -131,9 +133,9 @@ throwing component fails the build instead of leaving the Settings page blank.
   own theme and controls, and it owns its own login session. The settings page only shows state.
 - Every open action targets one named tab (`dsh-infinite-canvas`), so reopening navigates that
   same tab. The agent serves exactly one connected canvas, and a second tab makes
-  `findSession` fail with 「请只连接一个画布」 — which is why switching happens inside the
+  `findSession` fail with “Please connect only one canvas” — which is why switching happens inside the
   canvas page rather than by opening more tabs.
-- Settings store no canvas id at all. 「打开画布」 always opens the deployment list; the person
+- Settings store no canvas id at all. “Open canvas” always opens the deployment list; the person
   picks or creates a canvas there, and the canvas page keeps that choice in its own state,
   inside the same tab. The live context is whatever canvas that tab connects, readable with
   the `get_canvas_summary` MCP tool (`project.id`).
