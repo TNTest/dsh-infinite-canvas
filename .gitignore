@@ -1,0 +1,8 @@
+node_modules/
+.DS_Store
+*.log
+
+# Never commit local credentials or runtime state; they live outside the package.
+#   $DSH_HOME/infinite-canvas/{settings.json,canvas-api.json,agent.log}
+#   ~/.infinite-canvas/codex-agent.json
+*.local.json

@@ -1,0 +1,37 @@
+# Infinite Canvas bundle rows.
+#
+# 1. `infinite-canvas` — Host half: settings storage, the local agent supervisor,
+#    same-origin HTTP routes used by the Settings page and the background tab
+#    follower, and the `infinite_canvas_status` / `infinite_canvas_projects` tools.
+# 2. `infinite-canvas-mcp` — the official `@tigerowo/canvas-agent` MCP bridge over
+#    stdio. Its tools appear as `mcp__infinite-canvas__<tool>` once a canvas tab
+#    is connected to the local agent.
+#
+# No canvas id is configured here: the canvas is whichever page the browser tab
+# has open, and switching happens through that one tab.
+#
+# Connect token: the MCP child reads ~/.infinite-canvas/codex-agent.json itself,
+# so no secret is stored here. To target one canvas among several, uncomment
+# `env` and give that canvas's client id.
+- insert:
+    - id: infinite-canvas
+      name: dsh-infinite-canvas
+      config:
+        canvasBaseUrl: https://infic.transiglobal.com
+        agentUrl: http://127.0.0.1:3210
+        embedCredentials: true
+        # The plugin starts and supervises `npx -y @tigerowo/canvas-agent`
+        # itself, so no terminal is needed after installation. Set false to
+        # keep the plugin from spawning anything.
+        autoStart: true
+
+    - id: infinite-canvas-mcp
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: infinite-canvas
+        transport: stdio
+        command: npx
+        args: ['-y', '@tigerowo/canvas-agent@latest', 'mcp']
+        failOnStartupError: false
+        # env:
+        #   CANVAS_AGENT_CLIENT_ID: YOUR_CANVAS_CLIENT_ID

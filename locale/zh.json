@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "无限画布",
+    "description": "把无限画布接入 Harness：设置页里配置站点与本地 Canvas Agent，一键在浏览器打开带凭证的画布页，并联通官方 canvas-agent 的 MCP 工具。"
+  }
+}
