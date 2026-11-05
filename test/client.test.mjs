@@ -34,9 +34,9 @@ const ROUTES = {
     tokenAvailable: true,
     tokenSource: 'agent-file',
     tokenFile: '/tmp/codex-agent.json',
-    apiTokenAvailable: true,
-    apiTokenSource: 'file',
-    apiTokenFile: '/tmp/canvas-api.json',
+    apiKeyAvailable: true,
+    apiKeySource: 'file',
+    apiKeyFile: '/tmp/canvas-api.json',
     settingsPath: '/tmp/settings.json',
     mcpServerName: 'infinite-canvas',
     pending: { canvasId: 'fresh-canvas', title: '新画布' },
@@ -60,7 +60,7 @@ const ROUTES = {
   projects: { projects: [{ id: 'p1', title: '画布一', updatedAt: '2026-11-04T10:00:00.000Z', nodeCount: 2 }] },
   target: { pending: null },
   settings: { canvasUrl: 'https://canvas.example.com/canvas' },
-  'canvas-token': { apiTokenAvailable: true },
+  'canvas-key': { apiKeyAvailable: true },
   'agent/start': { running: true, connected: true, phase: 'running' },
   'agent/stop': { running: false, connected: false, phase: 'stopped' },
 }
@@ -98,7 +98,7 @@ let dirty = false
 const React = {
   createElement: (type, props, ...children) => ({
     type,
-    props: props === null || props === undefined ? {} : props,
+    props: { ...props, children: children.flat() },
     children: children.flat(),
   }),
   useState: (initial) => {
@@ -115,13 +115,25 @@ const React = {
       },
     ]
   },
-  useEffect: (fn) => {
-    hookIndex += 1
-    effects.push(fn)
+  useEffect: (fn, deps) => {
+    const slot = hookIndex++
+    if (!stores.has(currentKey)) stores.set(currentKey, [])
+    const store = stores.get(currentKey)
+    const previous = store[slot]
+    if (!previous || !deps || deps.some((value, index) => !Object.is(value, previous.deps[index]))) {
+      effects.push(() => {
+        previous?.cleanup?.()
+        store[slot] = { deps, cleanup: fn() }
+      })
+    }
   },
-  useCallback: (fn) => {
-    hookIndex += 1
-    return fn
+  useCallback: (fn, deps) => {
+    const slot = hookIndex++
+    if (!stores.has(currentKey)) stores.set(currentKey, [])
+    const store = stores.get(currentKey)
+    const previous = store[slot]
+    if (!previous || deps.some((value, index) => !Object.is(value, previous.deps[index]))) store[slot] = { deps, fn }
+    return store[slot].fn
   },
   useRef: (initial) => {
     const slot = hookIndex
@@ -274,14 +286,14 @@ check('it reads the agent probe', requests.includes('agent'))
 check('it lists the account canvases', requests.includes('projects'))
 
 const text = collect(tree).join(' | ')
-if (process.env.DEBUG_TREE === '1') console.log('TREE:', text.slice(0, 1600))
+if (process.env.DEBUG_TREE === '1') console.log('TREE:', text.slice(-2200))
 
 check('the title and intro render', text.includes('settings.title') && text.includes('settings.intro'))
 check('the settings form renders', text.includes('form.baseUrl') && text.includes('form.save'))
-check('the token field and its snippet render', text.includes('token.title') && text.includes('token.codeLabel') && text.includes('console.log'))
+check('API Key form replaces session-token instructions', text.includes('form.key') && text.includes('form.keyHint') && !source.includes('localStorage') && !source.includes('TOKEN_SNIPPET'))
 check('connection facts render', text.includes('status.heading') && text.includes('status.tools'))
 check('the start/stop control renders', text.includes('action.stopAgent') || text.includes('action.startAgent'))
-check('the canvas list renders', text.includes('check.title') && text.includes('check.ok(count=1)') && text.includes('canvas.example.com'))
+check('the canvas list renders', text.includes('projects.title') && text.includes('画布一') && text.includes('projects.open') && text.includes('canvas.example.com'))
 check('a pending canvas is announced', text.includes('panel.pending(title=新画布)'))
 check('the pending canvas gets its own credentialed link', text.includes('https://canvas.example.com/canvas/fresh-canvas#agentUrl='))
 
@@ -317,6 +329,33 @@ if (typeof nextTick === 'function') {
 }
 const blocked = posts.find((post) => post.name === 'target' && post.body !== null && post.body.blocked === true)
 check('a refused auto-open is reported back to the Host', blocked !== undefined && blocked.body.canvasId === 'blocked-canvas', JSON.stringify(blocked?.body ?? null))
+
+check('a blocked open keeps the follower polling', timers.some((timer) => timer.ms === 5000))
+const openCount = windowCalls.length
+ROUTES.state.pending = { canvasId: 'fresh-canvas', title: '重新打开', at: 2 }
+const reopenTick = takeFollowerTick()
+sandbox.window.open = (url, name) => { windowCalls.push({ url, name }); return { opener: null } }
+if (reopenTick) await reopenTick()
+await settle()
+check('the same canvas can be opened again on a new request', windowCalls.length === openCount + 1)
+
+function findNode(node, predicate) {
+  if (!node || typeof node !== 'object') return undefined
+  if (predicate(node)) return node
+  for (const child of Array.isArray(node.children) ? node.children : [node.children]) {
+    const found = findNode(child, predicate)
+    if (found) return found
+  }
+}
+const keyInput = findNode(tree, (node) => node.type === 'input' && node.props.type === 'password')
+check('API Key input is masked and labelled', Boolean(keyInput?.props.id) && keyInput.props.autoComplete === 'off')
+keyInput.props.onChange({ target: { type: 'password', value: 'ic_client_test_key' } })
+effects.length = 0
+tree = mount({ type: seat.component, props: { t }, children: [] }, 'root')
+for (const effect of effects) effect()
+findNode(tree, (node) => node.type === 'form').props.onSubmit({ preventDefault() {} })
+await settle()
+check('form verifies Key against the displayed deployment', posts.some((post) => post.name === 'canvas-key' && post.body.key === 'ic_client_test_key' && post.body.canvasBaseUrl === 'https://canvas.example.com'))
 
 for (const dispose of disposers) dispose()
 

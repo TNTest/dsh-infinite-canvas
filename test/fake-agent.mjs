@@ -16,7 +16,7 @@ const server = createServer((request, response) => {
   }
   if (typeof request.url === 'string' && request.url.startsWith('/tools')) {
     response.writeHead(200, { 'content-type': 'application/json' })
-    response.end(JSON.stringify([{ name: 'fake_tool', description: 'fake' }]))
+    response.end(JSON.stringify([{ name: 'fake_tool', description: 'fake' }, { name: 'set_agent_state' }, { name: 'read_skill_file' }]))
     return
   }
   response.writeHead(404, { 'content-type': 'application/json' })

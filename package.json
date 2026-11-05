@@ -1,8 +1,8 @@
 {
   "name": "dsh-infinite-canvas",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
-  "description": "Infinite Canvas inside DeepSeek Harness: settings-only configuration, one-tab credentialed canvas opening, agent supervision, and the official canvas-agent MCP tools.",
+  "description": "Infinite Canvas for DeepSeek Harness: user API Key setup, canvas selection, supervised local Agent, official MCP tools and a bundled operation skill.",
   "type": "module",
   "exports": {
     ".": "./index.js",
@@ -17,7 +17,8 @@
     "locale/*.json",
     "icon.svg",
     "README.md",
-    "README.zh-CN.md"
+    "README.zh-CN.md",
+    "skills/"
   ],
   "dsh": {
     "bundle": { "patch": "./cordis.patch.yml" },

@@ -33,196 +33,237 @@ window.__ModuleLoader__.load({
      */
     const CANVAS_TAB = 'dsh-infinite-canvas'
 
-    /**
-     * Shown in the settings page: prints only the signed-in user's own token,
-     * never the whole persisted record.
-     */
-    const TOKEN_SNIPPET = `Object.entries(localStorage).forEach(([key, value]) => {
-  try {
-    const { state = {} } = JSON.parse(value)
-    if (state.token) console.log(state.token)
-  } catch {}
-})`
-
-    const DICTIONARIES = {
-      zh: {
-        'nav.label': '无限画布',
-        'action.refresh': '刷新',
-        'open.button': '打开画布',
-        'panel.pending': 'Agent 新建了《{title}》——切到这张画布：',
-        'panel.blocked': '浏览器拦下了自动打开，Agent 也会在对话里给出可直接点的链接。',
-        'open.keepOpen': '「打开画布」始终复用同一个标签页；Agent 新建画布后也会自动把该标签页切过去。Agent 同一时刻只认一个画布，多开标签页会让它无法判断目标。',
-        'check.title': '画布列表',
-        'check.hint': '列出账号下的画布，也用来验证 Token。插件不记录任何画布 ID；Agent 新建画布后会自动把同一个标签页切过去。',
-        'check.noToken': '未配置画布站 API Token：在下面「配置」里填入后，这里会列出账号下的画布。',
-        'check.ok': 'Token 有效 · {count} 个画布',
-        'check.empty': '账号下还没有画布——请在画布页里新建一个。',
-        'check.refresh': '刷新',
-        'check.nodes': '{count} 节点',
-        'projects.loading': '读取中…',
-        'token.title': '画布站 API Token',
-        'token.hint': '用于读取画布列表（只读），以 Authorization: Bearer 发送给画布站。取法：在画布站页面按 F12 打开 Console，运行下面这段代码，复制打印出的 token。',
-        'token.codeLabel': 'Console 代码',
-        'token.copy': '复制代码',
-        'token.copied': '已复制',
-        'token.copyFailed': '复制失败',
-        'token.save': '保存 Token',
-        'token.clear': '清除 Token',
-        'token.saved': 'Token 已保存',
-        'token.present': '已配置',
-        'token.missing': '未配置',
-        'form.baseUrl': '画布站点地址',
-        'form.baseUrlHint': '默认 {default}，可改为你自己的部署地址。',
-        'form.agentUrl': '本地 Agent 地址',
-        'form.agentUrlHint': '官方默认 http://127.0.0.1:3210。',
-        'form.embed': '打开画布时自动带上连接凭证',
-        'form.embedHint': '把本地 Agent 地址与 Token 写进打开的画布地址 hash，页面一开即连接；关闭后需要在画布页里手动填写。',
-        'form.save': '保存',
-        'form.reset': '恢复默认地址',
-        'form.saved': '已保存',
-        'form.saving': '保存中…',
-        'form.error': '保存失败：{message}',
-        'settings.title': '无限画布',
-        'settings.intro': '在这里配置画布站点与本地 Canvas Agent 的连接方式。画布在浏览器标签页里打开，面板不内嵌；不需要填画布 ID——你在列表里打开哪个画布，插件就记住哪个。',
-        'status.heading': '连接状态',
-        'status.agent': '本地 Agent',
-        'status.canvas': '画布连接',
-        'status.openUrl': '打开地址',
-        'status.token': '连接凭证',
-        'status.tools': '画布工具',
-        'status.yes': '正常',
-        'status.no': '未就绪',
-        'status.tokenFile': '读取自 {source}',
-        'status.noToken': '未找到，请先启动本地 Canvas Agent',
-        'status.hint': '在本机终端运行 npx -y @tigerowo/canvas-agent@latest 启动本地 Agent，再点上方「打开画布」，用浏览器打开带凭证的画布页并选一张画布即可连接。',
-        'status.mcp': 'MCP 工具名格式：mcp__{server}__<工具>',
-        'status.settingsPath': '设置文件：{path}',
-        'action.startAgent': '启动 Agent',
-        'action.stopAgent': '停止 Agent',
-        'status.starting': '正在启动本地 Agent…',
-        'status.external': 'Agent 已在外部运行',
-        'status.log': '最近日志',
-        'status.phase': '托管状态',
-        'form.autoStart': '随 Harness 启动本地 Agent',
-        'form.autoStartHint': '开启后插件会在 Harness 启动时自动拉起 npx -y @tigerowo/canvas-agent@latest，并在它崩溃后重启；关闭则只在点「启动 Agent」时运行。',
-        'phase.idle': '未启动',
-        'phase.starting': '启动中',
-        'phase.running': '由 Harness 托管运行',
-        'phase.external': '外部已运行',
-        'phase.stopping': '停止中',
-        'phase.stopped': '已停止',
-        'phase.exited': '已退出',
-        'phase.error': '启动失败',
-      },
-      en: {
-        'nav.label': 'Infinite Canvas',
-        'action.refresh': 'Refresh',
-        'open.button': 'Open canvas',
-        'panel.pending': 'The agent created 《{title}》 — switch to it:',
-        'panel.blocked': 'The browser blocked the automatic switch; the agent also posts a one-click link in the chat.',
-        'open.keepOpen': 'Open canvas always reuses one tab, and a canvas the agent creates is switched into it automatically. The agent serves a single canvas at a time, so extra tabs make it unable to pick a target.',
-        'check.title': 'Canvases',
-        'check.hint': 'Lists the account canvases and proves the token. No canvas id is stored; when the agent creates a canvas it switches this same tab to it automatically.',
-        'check.noToken': 'No canvas API token yet: add one under Configure below and the account canvases appear here.',
-        'check.ok': 'Token works · {count} canvases',
-        'check.empty': 'No canvases on the account yet — create one in the canvas page.',
-        'check.refresh': 'Refresh',
-        'check.nodes': '{count} nodes',
-        'projects.loading': 'Loading…',
-        'token.title': 'Canvas API token',
-        'token.hint': 'Used to read the canvas list (read-only), sent to the deployment as Authorization: Bearer. To get it, open the canvas site, press F12 for the Console, run the snippet below and copy the printed token.',
-        'token.codeLabel': 'Console snippet',
-        'token.copy': 'Copy',
-        'token.copied': 'Copied',
-        'token.copyFailed': 'Copy failed',
-        'token.save': 'Save token',
-        'token.clear': 'Clear token',
-        'token.saved': 'Token saved',
-        'token.present': 'Configured',
-        'token.missing': 'Not configured',
-        'form.baseUrl': 'Canvas deployment URL',
-        'form.baseUrlHint': 'Defaults to {default}; point it at your own deployment.',
-        'form.agentUrl': 'Local agent URL',
-        'form.agentUrlHint': 'The official default is http://127.0.0.1:3210.',
-        'form.embed': 'Embed the connect credentials when opening',
-        'form.embedHint': 'Writes the agent URL and token into the opened canvas address hash so the page connects on open. When off, the handshake is manual inside the canvas page.',
-        'form.save': 'Save',
-        'form.reset': 'Reset addresses',
-        'form.saved': 'Saved',
-        'form.saving': 'Saving…',
-        'form.error': 'Save failed: {message}',
-        'settings.title': 'Infinite Canvas',
-        'settings.intro': 'Configure the deployment and how the local Canvas Agent is reached. The canvas opens in a browser tab; the panel does not embed it and no canvas id has to be typed — whichever canvas you open from the list is remembered.',
-        'status.heading': 'Connection',
-        'status.agent': 'Local agent',
-        'status.canvas': 'Canvas link',
-        'status.openUrl': 'Opens',
-        'status.token': 'Connect token',
-        'status.tools': 'Canvas tools',
-        'status.yes': 'Ready',
-        'status.no': 'Not ready',
-        'status.tokenFile': 'Read from {source}',
-        'status.noToken': 'Not found — start the local Canvas Agent first',
-        'status.hint': 'Run npx -y @tigerowo/canvas-agent@latest on this machine, then press Open canvas above to open the credentialed canvas page in your browser and pick a canvas.',
-        'status.mcp': 'MCP tool names: mcp__{server}__<tool>',
-        'status.settingsPath': 'Settings file: {path}',
-        'action.startAgent': 'Start agent',
-        'action.stopAgent': 'Stop agent',
-        'status.starting': 'Starting the local agent…',
-        'status.external': 'Agent already running externally',
-        'status.log': 'Recent log',
-        'status.phase': 'Supervisor',
-        'form.autoStart': 'Keep the local agent running with Harness',
-        'form.autoStartHint': 'When on, the plugin starts npx -y @tigerowo/canvas-agent@latest with Harness and restarts it after a crash. When off, it runs only when you press Start agent.',
-        'phase.idle': 'Not started',
-        'phase.starting': 'Starting',
-        'phase.running': 'Managed by Harness',
-        'phase.external': 'Running externally',
-        'phase.stopping': 'Stopping',
-        'phase.stopped': 'Stopped',
-        'phase.exited': 'Exited',
-        'phase.error': 'Failed to start',
-      },
-    }
+    const MESSAGES = {
+  "nav.label": [
+    "无限画布",
+    "Infinite Canvas"
+  ],
+  "settings.title": [
+    "无限画布",
+    "Infinite Canvas"
+  ],
+  "settings.intro": [
+    "连接画布站，让智能体在画布上工作。",
+    "Connect your canvas and let the agent work on it."
+  ],
+  "open.button": [
+    "打开画布",
+    "Open canvas"
+  ],
+  "action.refresh": [
+    "刷新状态",
+    "Refresh status"
+  ],
+  "panel.pending": [
+    "等待打开：{title}",
+    "Ready to open: {title}"
+  ],
+  "panel.blocked": [
+    "浏览器阻止了自动打开，请点击链接继续。",
+    "The browser blocked automatic opening. Use the link to continue."
+  ],
+  "form.heading": [
+    "站点连接",
+    "Deployment"
+  ],
+  "form.baseUrl": [
+    "画布站地址",
+    "Canvas URL"
+  ],
+  "form.key": [
+    "用户 API Key",
+    "User API Key"
+  ],
+  "form.keyHint": [
+    "在画布站「账户 → API Key」创建；读取需 read，新建需 read + write。",
+    "Create it in the canvas account → API Key. Listing needs read; creating needs read + write."
+  ],
+  "form.keyPresent": [
+    "已保存，留空保留",
+    "Saved; leave blank to keep"
+  ],
+  "form.keyMissing": [
+    "粘贴 ic_ 开头的 Key",
+    "Paste a key starting with ic_"
+  ],
+  "form.save": [
+    "验证并保存",
+    "Verify & save"
+  ],
+  "form.saving": [
+    "正在验证…",
+    "Verifying…"
+  ],
+  "form.saved": [
+    "连接配置已保存",
+    "Connection saved"
+  ],
+  "form.clear": [
+    "移除 Key",
+    "Remove key"
+  ],
+  "form.env": [
+    "Key 由 CANVAS_API_KEY 环境变量提供。",
+    "Key provided through CANVAS_API_KEY."
+  ],
+  "form.privacy": [
+    "Key 仅在本机保存，直接由插件请求已配置的站点。",
+    "The key is stored locally and sent by the plugin to the configured site."
+  ],
+  "form.advanced": [
+    "高级设置",
+    "Advanced settings"
+  ],
+  "form.agentUrl": [
+    "本地 Agent 地址",
+    "Local agent URL"
+  ],
+  "form.autoStart": [
+    "随 Harness 启动 Agent",
+    "Start agent with Harness"
+  ],
+  "form.embed": [
+    "打开时自动连接本地 Agent",
+    "Connect to local agent when opening"
+  ],
+  "status.heading": [
+    "连接状态",
+    "Connection"
+  ],
+  "status.agent": [
+    "本地 Agent",
+    "Local agent"
+  ],
+  "status.canvas": [
+    "画布连接",
+    "Canvas connection"
+  ],
+  "status.key": [
+    "API Key",
+    "API Key"
+  ],
+  "status.yes": [
+    "已就绪",
+    "Ready"
+  ],
+  "status.no": [
+    "未连接",
+    "Disconnected"
+  ],
+  "status.configured": [
+    "已配置",
+    "Configured"
+  ],
+  "status.missing": [
+    "待配置",
+    "Needs setup"
+  ],
+  "status.tools": [
+    "{count} 个画布工具可用",
+    "{count} canvas tools available"
+  ],
+  "status.hint": [
+    "画布编辑需要在浏览器打开一张画布；只保留一个连接的标签页。",
+    "Live editing needs one canvas open in the browser. Keep only one connected tab."
+  ],
+  "status.log": [
+    "诊断日志",
+    "Diagnostics"
+  ],
+  "action.startAgent": [
+    "启动 Agent",
+    "Start agent"
+  ],
+  "action.stopAgent": [
+    "停止 Agent",
+    "Stop agent"
+  ],
+  "status.starting": [
+    "正在启动 Agent…",
+    "Starting agent…"
+  ],
+  "status.external": [
+    "Agent 由外部进程运行",
+    "Agent running externally"
+  ],
+  "projects.title": [
+    "我的画布",
+    "My canvases"
+  ],
+  "projects.refresh": [
+    "刷新列表",
+    "Refresh list"
+  ],
+  "projects.loading": [
+    "正在读取画布…",
+    "Loading canvases…"
+  ],
+  "projects.empty": [
+    "还没有画布。连接后可让智能体新建一张。",
+    "No canvases yet. Ask the agent to create one after connecting."
+  ],
+  "projects.noKey": [
+    "保存 API Key 后，这里会显示账户的画布。",
+    "Save an API Key to see your canvases."
+  ],
+  "projects.nodes": [
+    "{count} 个节点",
+    "{count} nodes"
+  ],
+  "projects.open": [
+    "打开",
+    "Open"
+  ],
+  "projects.untitled": [
+    "未命名画布",
+    "Untitled canvas"
+  ]
+}
+    MESSAGES['form.agentHint'] = ['更改端口后，也需在 MCP 行配置中同步 CANVAS_AGENT_PORT 并重启 Harness。', 'When changing the port, also update CANVAS_AGENT_PORT in the MCP row and restart Harness.']
+    const DICTIONARIES = Object.fromEntries(['zh', 'en'].map((lang, index) =>
+      [lang, Object.fromEntries(Object.entries(MESSAGES).map(([key, value]) => [key, value[index]]))],
+    ))
 
     const css = `
-.dsh-ic-page{box-sizing:border-box;height:100%;min-height:0;display:flex;flex-direction:column;gap:12px;padding:calc(28px + var(--dsh-frame-top-clearance,0px)) 16px 16px;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font-size:13px}
-.dsh-ic-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;min-height:26px}
-.dsh-ic-title{margin:0;font-size:15px;font-weight:600;line-height:1.3}
-.dsh-ic-muted{margin:0;font-size:12px;line-height:1.5;color:var(--dsw-alias-label-secondary)}
+.dsh-ic-page{color:var(--dsw-alias-label-primary);font:inherit;font-size:13px;line-height:1.5;container-type:inline-size;min-width:0}
+.dsh-ic-page *{box-sizing:border-box}
+.dsh-ic-section{display:flex;flex-direction:column;gap:18px;width:100%;max-width:820px;padding:0 2px 24px}
+.dsh-ic-header,.dsh-ic-bar,.dsh-ic-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap;min-width:0}
+.dsh-ic-header{justify-content:space-between;align-items:flex-start}
+.dsh-ic-title{margin:0;font-size:16px;font-weight:650;line-height:1.4;letter-spacing:-.02em;overflow-wrap:anywhere}
+.dsh-ic-header h2{font-size:22px;margin-bottom:4px}
+.dsh-ic-muted{margin:0;font-size:12px;line-height:1.6;color:var(--dsw-alias-label-secondary);overflow-wrap:anywhere}
+.dsh-ic-card{padding:20px;border:1px solid color-mix(in srgb,var(--dsw-alias-label-secondary) 14%,transparent);border-radius:16px;background:color-mix(in srgb,var(--dsw-alias-bg-layer-1) 80%,var(--dsw-alias-bg-base));min-width:0;display:flex;flex-direction:column;gap:16px}
 .dsh-ic-spacer{flex:1 1 auto}
-.dsh-ic-button{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:28px;padding:0 12px;border-radius:8px;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font:inherit;font-size:12.5px;cursor:pointer;text-decoration:none;white-space:nowrap}
-.dsh-ic-button:not(.dsh-ic-button--primary):hover{background:var(--dsw-alias-bg-layer-2)}
-.dsh-ic-button:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px}
-.dsh-ic-button[disabled]{opacity:.55;cursor:default}
-/* Fill and label come as a pair so light and dark themes both stay readable. */
-.dsh-ic-button--primary{background:var(--dsw-alias-button-primary-fill,var(--dsw-alias-brand-primary));border-color:transparent;color:var(--dsw-alias-label-primary-foreground,#fff)}
-.dsh-ic-button--primary:hover:not([disabled]){background:var(--dsw-alias-button-primary-hover,var(--dsw-alias-button-primary-fill,var(--dsw-alias-brand-primary)));filter:none}
-.dsh-ic-button--primary[disabled]{color:var(--dsw-alias-label-primary-foreground,#fff);opacity:.55}
-.dsh-ic-hero-url{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px;line-height:1.5;color:var(--dsw-alias-label-secondary);overflow-wrap:anywhere}
-.dsh-ic-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-.dsh-ic-project{display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--dsw-alias-border-l1);border-radius:10px;background:var(--dsw-alias-bg-layer-1)}
-.dsh-ic-code-wrap{display:flex;flex-direction:column;gap:6px}
-.dsh-ic-code-head{display:flex;align-items:center;gap:8px}
-.dsh-ic-code-block{margin:0;padding:10px 12px;border:1px solid var(--dsw-alias-border-l1);border-radius:8px;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px;line-height:1.6;white-space:pre-wrap;overflow-wrap:anywhere;tab-size:2}
-.dsh-ic-code-btn{height:24px;padding:0 9px;font-size:12px}
-.dsh-ic-field{display:flex;flex-direction:column;gap:5px}
-.dsh-ic-label{font-size:12.5px;font-weight:500;color:var(--dsw-alias-label-primary)}
-.dsh-ic-input{box-sizing:border-box;width:100%;height:34px;padding:0 10px;border-radius:8px;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font:inherit;font-size:13px}
-.dsh-ic-input:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px}
-.dsh-ic-row{display:flex;align-items:center;gap:10px;justify-content:flex-end}
-.dsh-ic-check{display:flex;align-items:flex-start;gap:8px;font-size:12.5px;line-height:1.5}
-.dsh-ic-check input{margin:2px 0 0;accent-color:var(--dsw-alias-brand-primary)}
-.dsh-ic-error{color:var(--dsw-alias-state-error-primary);font-size:12px}
-.dsh-ic-ok{color:var(--dsw-alias-state-success-primary);font-size:12px}
-.dsh-ic-section{display:flex;flex-direction:column;gap:12px;max-width:640px;padding-bottom:24px}
-.dsh-ic-list{display:flex;flex-direction:column;gap:6px}
-.dsh-ic-list-row{display:flex;gap:10px;align-items:baseline;font-size:12.5px;line-height:1.5}
-.dsh-ic-key{flex:0 0 108px;color:var(--dsw-alias-label-secondary)}
-.dsh-ic-value{min-width:0;overflow-wrap:anywhere;color:var(--dsw-alias-label-primary)}
-.dsh-ic-code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}
-.dsh-ic-divider{height:1px;background:var(--dsw-alias-border-l1)}
-.dsh-ic-log{margin:0;max-height:150px;overflow:auto;padding:8px 10px;border-radius:8px;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-secondary);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere}
+.dsh-ic-button{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:36px;padding:7px 13px;border-radius:9px;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;font-weight:550;cursor:pointer;text-decoration:none;white-space:nowrap}
+.dsh-ic-button:hover:not(:disabled){background:var(--dsw-alias-bg-layer-2)}
+.dsh-ic-button:active:not(:disabled){transform:translateY(1px)}
+.dsh-ic-button:focus-visible,.dsh-ic-input:focus-visible,.dsh-ic-page summary:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:3px}
+.dsh-ic-button:disabled{opacity:.5;cursor:not-allowed}
+.dsh-ic-button--primary{background:var(--dsw-alias-button-primary-fill,var(--dsw-alias-brand-primary));border-color:transparent;color:var(--dsw-alias-label-primary-foreground,#f5f6f8)}
+.dsh-ic-button--primary:hover:not(:disabled){background:var(--dsw-alias-button-primary-hover,var(--dsw-alias-brand-primary));color:var(--dsw-alias-label-primary-foreground,#f5f6f8)}
+.dsh-ic-field{display:flex;flex-direction:column;gap:7px;min-width:0}
+.dsh-ic-label{font-size:12px;font-weight:600}
+.dsh-ic-input{width:100%;min-width:0;height:40px;padding:0 12px;border-radius:9px;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font:inherit}
+.dsh-ic-input::placeholder{color:var(--dsw-alias-label-secondary);opacity:1}
+.dsh-ic-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.dsh-ic-check{display:flex;align-items:center;gap:8px;min-height:36px;font-size:12px;cursor:pointer}
+.dsh-ic-check input{accent-color:var(--dsw-alias-brand-primary)}
+.dsh-ic-error{margin:0;color:var(--dsw-alias-state-error-primary);font-size:12px;overflow-wrap:anywhere}
+.dsh-ic-ok{margin:0;color:var(--dsw-alias-state-success-primary);font-size:12px}
+.dsh-ic-status{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.dsh-ic-status-item{padding:11px 13px;background:var(--dsw-alias-bg-layer-1);border-radius:11px;min-width:0}
+.dsh-ic-status-value{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600;margin-top:5px}
+.dsh-ic-dot{width:6px;height:6px;border-radius:50%;background:var(--dsw-alias-label-secondary);flex-shrink:0}
+.dsh-ic-dot--ready{background:var(--dsw-alias-state-success-primary)}
+.dsh-ic-project{display:flex;align-items:center;gap:12px;padding:12px 0;border-top:1px solid var(--dsw-alias-border-l1);min-width:0}
+.dsh-ic-project-title{font-size:13px;font-weight:550;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dsh-ic-list{display:flex;flex-direction:column;min-width:0}
+.dsh-ic-page summary{cursor:pointer;font-size:12px;font-weight:550;min-height:36px;padding:7px 0;color:var(--dsw-alias-label-secondary)}
+.dsh-ic-details-body{display:flex;flex-direction:column;gap:12px;padding-top:12px}
+.dsh-ic-log{margin:0;max-height:150px;overflow:auto;padding:12px;border-radius:9px;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-secondary);font:11px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;overflow-wrap:anywhere}
+@container (max-width:420px){.dsh-ic-card{padding:16px}.dsh-ic-status{grid-template-columns:minmax(0,1fr)}.dsh-ic-status-item{display:flex;justify-content:space-between;align-items:center}.dsh-ic-status-value{margin:0}.dsh-ic-button{min-height:44px}.dsh-ic-input{height:44px}}
+@media(prefers-reduced-motion:reduce){.dsh-ic-page *{transition:none!important;animation:none!important}.dsh-ic-button:active:not(:disabled){transform:none}}
 `
 
     function Styles() {
@@ -261,11 +302,11 @@ window.__ModuleLoader__.load({
       })
     const readLink = () => callApi('link', { method: 'POST' })
     const readProjects = () => callApi('projects')
-    const saveCanvasToken = (token) =>
-      callApi('canvas-token', {
+    const saveCanvasKey = (key, canvasBaseUrl) =>
+      callApi('canvas-key', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ token }),
+        body: JSON.stringify({ key, canvasBaseUrl }),
       })
 
 
@@ -336,59 +377,6 @@ window.__ModuleLoader__.load({
       return { state, agent, link, error, refresh, act, setState }
     }
 
-    /** Copy-to-clipboard with a legacy fallback, since the GUI may run in a plain frame. */
-    async function copyText(text) {
-      try {
-        if (typeof navigator !== 'undefined' && navigator.clipboard !== undefined) {
-          await navigator.clipboard.writeText(text)
-          return true
-        }
-      } catch {
-        // Fall through to the textarea path.
-      }
-      try {
-        const area = document.createElement('textarea')
-        area.value = text
-        area.setAttribute('readonly', '')
-        area.style.position = 'fixed'
-        area.style.top = '-1000px'
-        area.style.opacity = '0'
-        document.body.appendChild(area)
-        area.select()
-        const copied = document.execCommand('copy')
-        document.body.removeChild(area)
-        return copied === true
-      } catch {
-        return false
-      }
-    }
-
-    /** A read-only snippet with its own copy action. */
-    function CodeBlock({ t, code }) {
-      const [state, setState] = useState('idle')
-      const copy = async () => {
-        const copied = await copyText(code)
-        setState(copied ? 'copied' : 'failed')
-        setTimeout(() => setState('idle'), copied ? 1600 : 2600)
-      }
-      return h(
-        'div',
-        { className: 'dsh-ic-code-wrap' },
-        h(
-          'div',
-          { className: 'dsh-ic-code-head' },
-          h('span', { className: 'dsh-ic-label' }, t('token.codeLabel')),
-          h('span', { className: 'dsh-ic-spacer' }),
-          h(
-            'button',
-            { type: 'button', className: 'dsh-ic-button dsh-ic-code-btn', onClick: () => void copy() },
-            state === 'copied' ? t('token.copied') : state === 'failed' ? t('token.copyFailed') : t('token.copy'),
-          ),
-        ),
-        h('pre', { className: 'dsh-ic-code-block' }, code),
-      )
-    }
-
     /**
      * An anchor that targets the single canvas tab. A plain named `target`
      * already makes the browser reuse that tab; the click handler does the same
@@ -451,328 +439,124 @@ window.__ModuleLoader__.load({
       )
     }
 
-    /** One form for the panel and the Settings section; both write the same file. */
     function SettingsForm({ t, state, onSaved }) {
       const uid = useId()
-      const baseId = `${uid}-base`
-      const agentId = `${uid}-agent`
-      const [baseUrl, setBaseUrl] = useState(state === null ? '' : state.canvasBaseUrl)
-      const [agentUrl, setAgentUrl] = useState(state === null ? '' : state.agentUrl)
-      const [embed, setEmbed] = useState(state === null ? true : state.embedCredentials !== false)
-      const [autoStart, setAutoStart] = useState(state === null ? true : state.autoStart !== false)
+      const [baseUrl, setBaseUrl] = useState('')
+      const [agentUrl, setAgentUrl] = useState('')
+      const [autoStart, setAutoStart] = useState(true)
+      const [embed, setEmbed] = useState(true)
+      const [key, setKey] = useState('')
       const [dirty, setDirty] = useState(false)
       const [busy, setBusy] = useState(false)
-      const [message, setMessage] = useState('')
       const [failure, setFailure] = useState('')
-      const [apiToken, setApiToken] = useState('')
-      const [tokenBusy, setTokenBusy] = useState(false)
-      const [tokenMessage, setTokenMessage] = useState('')
-      const [tokenFailure, setTokenFailure] = useState('')
-
+      const [message, setMessage] = useState('')
+      const configured = state?.apiKeyAvailable === true
+      const envKey = state?.apiKeySource === 'env'
       useEffect(() => {
-        if (state === null || dirty) return
+        if (!state || dirty) return
         setBaseUrl(state.canvasBaseUrl)
         setAgentUrl(state.agentUrl)
-        setEmbed(state.embedCredentials !== false)
         setAutoStart(state.autoStart !== false)
+        setEmbed(state.embedCredentials !== false)
       }, [state, dirty])
-
-      const submit = async (patch) => {
+      const change = (setter) => (event) => {
+        setDirty(true)
+        setMessage('')
+        setter(event.target.type === 'checkbox' ? event.target.checked : event.target.value)
+      }
+      const submit = async (clear = false) => {
         setBusy(true)
         setFailure('')
         setMessage('')
         try {
-          const next = await saveSettings(patch)
+          if (clear) {
+            onSaved(await saveCanvasKey(''))
+          } else {
+            if (key.trim()) await saveCanvasKey(key, baseUrl)
+            else if (!configured) throw new Error(t('form.keyMissing'))
+            onSaved(await saveSettings({ canvasBaseUrl: baseUrl, agentUrl, autoStart, embedCredentials: embed }))
+          }
+          setKey('')
           setDirty(false)
           setMessage(t('form.saved'))
-          if (typeof onSaved === 'function') onSaved(next)
         } catch (error) {
-          setFailure(t('form.error', { message: error instanceof Error ? error.message : String(error) }))
+          setFailure(error instanceof Error ? error.message : String(error))
         } finally {
           setBusy(false)
         }
       }
-
-      const submitToken = async (value) => {
-        setTokenBusy(true)
-        setTokenFailure('')
-        setTokenMessage('')
-        try {
-          const next = await saveCanvasToken(value)
-          setApiToken('')
-          setTokenMessage(t('token.saved'))
-          if (typeof onSaved === 'function') onSaved(next)
-        } catch (error) {
-          setTokenFailure(error instanceof Error ? error.message : String(error))
-        } finally {
-          setTokenBusy(false)
-        }
-      }
-
-      const defaults = state === null ? { canvasBaseUrl: '', agentUrl: '' } : state.defaults
-
-      return h(
-        'div',
-        { className: 'dsh-ic-field', style: { gap: '14px' } },
-        h(
-          Field,
-          { label: t('form.baseUrl'), hint: t('form.baseUrlHint', { default: defaults.canvasBaseUrl }), htmlFor: baseId },
-          h('input', {
-            id: baseId,
-            className: 'dsh-ic-input',
-            type: 'url',
-            spellCheck: false,
-            value: baseUrl,
-            placeholder: defaults.canvasBaseUrl,
-            onChange: (event) => {
-              setDirty(true)
-              setBaseUrl(event.target.value)
-            },
-          }),
-        ),
-        h(
-          Field,
-          { label: t('form.agentUrl'), hint: t('form.agentUrlHint'), htmlFor: agentId },
-          h('input', {
-            id: agentId,
-            className: 'dsh-ic-input',
-            type: 'url',
-            spellCheck: false,
-            value: agentUrl,
-            placeholder: defaults.agentUrl,
-            onChange: (event) => {
-              setDirty(true)
-              setAgentUrl(event.target.value)
-            },
-          }),
-        ),
-        h(
-          'label',
-          { className: 'dsh-ic-check' },
-          h('input', {
-            type: 'checkbox',
-            checked: autoStart,
-            onChange: (event) => {
-              setDirty(true)
-              setAutoStart(event.target.checked)
-            },
-          }),
-          h('span', null, t('form.autoStart'), h('br'), h('span', { className: 'dsh-ic-muted' }, t('form.autoStartHint'))),
-        ),
-        h(
-          'label',
-          { className: 'dsh-ic-check' },
-          h('input', {
-            type: 'checkbox',
-            checked: embed,
-            onChange: (event) => {
-              setDirty(true)
-              setEmbed(event.target.checked)
-            },
-          }),
-          h('span', null, t('form.embed'), h('br'), h('span', { className: 'dsh-ic-muted' }, t('form.embedHint'))),
-        ),
-        h(
-          'div',
-          { className: 'dsh-ic-field', style: { gap: '8px' } },
-          h(
-            'span',
-            { className: 'dsh-ic-label' },
-            t('token.title'),
-            ' · ',
-            h(
-              'span',
-              { className: 'dsh-ic-muted' },
-              state !== null && state.apiTokenAvailable === true ? t('token.present') : t('token.missing'),
-            ),
-          ),
-          h(
-            'div',
-            { className: 'dsh-ic-actions' },
-            h('input', {
-              className: 'dsh-ic-input',
-              style: { flex: '1 1 220px' },
-              type: 'password',
-              spellCheck: false,
-              autoComplete: 'off',
-              value: apiToken,
-              placeholder: state !== null && state.apiTokenAvailable === true ? '••••••' : t('token.missing'),
-              onChange: (event) => setApiToken(event.target.value),
-            }),
-            h(
-              'button',
-              {
-                type: 'button',
-                className: 'dsh-ic-button',
-                disabled: tokenBusy || apiToken.trim() === '',
-                onClick: () => void submitToken(apiToken.trim()),
-              },
-              t('token.save'),
-            ),
-            h(
-              'button',
-              { type: 'button', className: 'dsh-ic-button', disabled: tokenBusy, onClick: () => void submitToken('') },
-              t('token.clear'),
-            ),
-          ),
-          h('p', { className: 'dsh-ic-muted' }, t('token.hint')),
-          h(CodeBlock, { t, code: TOKEN_SNIPPET }),
-          tokenFailure === '' ? null : h('p', { className: 'dsh-ic-error' }, tokenFailure),
-          tokenMessage === '' ? null : h('p', { className: 'dsh-ic-ok' }, tokenMessage),
-        ),
-        failure === '' ? null : h('p', { className: 'dsh-ic-error' }, failure),
-        message === '' ? null : h('p', { className: 'dsh-ic-ok' }, message),
-        h(
-          'div',
-          { className: 'dsh-ic-row' },
-          h(
-            'button',
-            {
-              type: 'button',
-              className: 'dsh-ic-button',
-              disabled: busy,
-              onClick: () => {
-                setDirty(true)
-                void submit({
-                  canvasBaseUrl: defaults.canvasBaseUrl,
-                  agentUrl: defaults.agentUrl,
-                  embedCredentials: true,
-                })
-              },
-            },
-            t('form.reset'),
-          ),
-          h(
-            'button',
-            {
-              type: 'button',
-              className: 'dsh-ic-button dsh-ic-button--primary',
-              disabled: busy,
-              onClick: () => void submit({ canvasBaseUrl: baseUrl, agentUrl, embedCredentials: embed, autoStart }),
-            },
-            busy ? t('form.saving') : t('form.save'),
-          ),
-        ),
+      return h('form', { className: 'dsh-ic-card', onSubmit: (event) => { event.preventDefault(); if (!busy) void submit() } },
+        h('h3', { className: 'dsh-ic-title' }, t('form.heading')),
+        h(Field, { label: t('form.baseUrl'), htmlFor: `${uid}-base` },
+          h('input', { id: `${uid}-base`, type: 'url', required: true, className: 'dsh-ic-input', value: baseUrl, spellCheck: false, onChange: change(setBaseUrl) })),
+        h(Field, { label: t('form.key'), htmlFor: `${uid}-key`, hint: t('form.keyHint') },
+          h('input', { id: `${uid}-key`, type: 'password', className: 'dsh-ic-input', value: key, spellCheck: false, autoComplete: 'off', placeholder: t(configured ? 'form.keyPresent' : 'form.keyMissing'), onChange: change(setKey) })),
+        envKey ? h('p', { className: 'dsh-ic-muted' }, t('form.env')) : null,
+        h('p', { className: 'dsh-ic-muted' }, t('form.privacy')),
+        h('details', null,
+          h('summary', null, t('form.advanced')),
+          h('div', { className: 'dsh-ic-details-body' },
+            h(Field, { label: t('form.agentUrl'), htmlFor: `${uid}-agent`, hint: t('form.agentHint') },
+              h('input', { id: `${uid}-agent`, type: 'url', required: true, className: 'dsh-ic-input', value: agentUrl, onChange: change(setAgentUrl) })),
+            h('label', { className: 'dsh-ic-check' }, h('input', { type: 'checkbox', checked: autoStart, onChange: change(setAutoStart) }), t('form.autoStart')),
+            h('label', { className: 'dsh-ic-check' }, h('input', { type: 'checkbox', checked: embed, onChange: change(setEmbed) }), t('form.embed')))),
+        failure ? h('p', { className: 'dsh-ic-error', role: 'alert' }, failure) : null,
+        message ? h('p', { className: 'dsh-ic-ok', role: 'status' }, message) : null,
+        h('div', { className: 'dsh-ic-row' },
+          h('button', { type: 'submit', className: 'dsh-ic-button dsh-ic-button--primary', disabled: busy || !state }, t(busy ? 'form.saving' : 'form.save')),
+          configured && !envKey ? h('button', { type: 'button', className: 'dsh-ic-button', disabled: busy, onClick: () => void submit(true) }, t('form.clear')) : null),
       )
     }
 
-    /** Connection facts shared by the panel and the settings page. */
     function StatusList({ t, state, agent }) {
-      if (state === null) return null
-      const readyOr = (ready) => (ready === true ? t('status.yes') : t('status.no'))
-      const tokenText =
-        state.tokenAvailable !== true
-          ? t('status.noToken')
-          : t('status.tokenFile', { source: state.tokenSource === 'env' ? 'CANVAS_AGENT_TOKEN' : state.tokenFile })
-      const toolNames =
-        agent !== null && Array.isArray(agent.tools) ? agent.tools.filter((toolName) => typeof toolName === 'string') : []
       const rows = [
-        [t('status.agent'), readyOr(agent !== null && agent.running === true)],
-        [t('status.phase'), agent === null ? t('status.no') : t(`phase.${agent.phase === undefined ? 'idle' : agent.phase}`)],
-        [t('status.canvas'), readyOr(agent !== null && agent.connected === true)],
-        [t('status.openUrl'), state.canvasUrl],
-        [t('status.token'), tokenText],
-        [t('status.tools'), toolNames.length > 0 ? toolNames.join(', ') : t('status.no')],
-        ['MCP', t('status.mcp', { server: state.mcpServerName })],
+        ['status.key', state?.apiKeyAvailable, 'status.configured', 'status.missing'],
+        ['status.agent', agent?.running, 'status.yes', 'status.no'],
+        ['status.canvas', agent?.connected, 'status.yes', 'status.no'],
       ]
-      return h(
-        'div',
-        { className: 'dsh-ic-list' },
-        rows.map(([key, value], index) =>
-          h(
-            'div',
-            { className: 'dsh-ic-list-row', key: `${index}` },
-            h('span', { className: 'dsh-ic-key' }, key),
-            h('span', { className: 'dsh-ic-value' }, value),
-          ),
-        ),
-      )
+      return h('div', { className: 'dsh-ic-status', 'aria-label': t('status.heading') },
+        rows.map(([label, ready, yes, no]) => h('div', { className: 'dsh-ic-status-item', key: label },
+          h('span', { className: 'dsh-ic-muted' }, t(label)),
+          h('span', { className: 'dsh-ic-status-value' }, h('span', { className: `dsh-ic-dot${ready ? ' dsh-ic-dot--ready' : ''}`, 'aria-hidden': true }), t(ready ? yes : no)))))
     }
 
-    /**
-     * Token check, nothing else: the canvas-agent MCP tool set has no
-     * canvas-management tools, so a project listing is the cheapest way to
-     * prove the stored token can reach the deployment API. Creating and
-     * switching canvases happens inside the canvas page itself, in the same
-     * browser tab, so no canvas id is kept here.
-     */
-    function TokenCheck({ t, state }) {
+    function ProjectList({ t, state, link }) {
       const [projects, setProjects] = useState(null)
       const [failure, setFailure] = useState('')
-
-      // Depend on the flag, not the whole state object: the panel re-reads state
-      // every few seconds and must not re-hit the deployment API each time.
-      const available = state !== null && state.apiTokenAvailable === true
-
+      const [busy, setBusy] = useState(false)
+      const available = state?.apiKeyAvailable === true
+      const revision = state?.apiKeyRevision
+      const baseUrl = state?.canvasBaseUrl
+      const latest = useRef(0)
       const load = useCallback(async () => {
-        if (!available) {
-          setProjects(null)
-          return
-        }
+        const request = ++latest.current
+        setFailure('')
+        if (!available) { setProjects(null); return }
+        setBusy(true)
         try {
           const payload = await readProjects()
-          setProjects(Array.isArray(payload === undefined ? undefined : payload.projects) ? payload.projects : [])
-          setFailure('')
+          if (latest.current === request) setProjects(payload.projects)
         } catch (error) {
-          setProjects([])
-          setFailure(error instanceof Error ? error.message : String(error))
+          if (latest.current === request) { setProjects(null); setFailure(error instanceof Error ? error.message : String(error)) }
+        } finally {
+          if (latest.current === request) setBusy(false)
         }
-      }, [available])
-
-      useEffect(() => {
-        void load()
-      }, [load])
-
-      if (state === null) return null
-      if (state.apiTokenAvailable !== true) {
-        return h('p', { className: 'dsh-ic-muted' }, t('check.noToken'))
-      }
-
-      const summary =
-        projects === null
-          ? h('p', { className: 'dsh-ic-muted' }, t('projects.loading'))
-          : projects.length === 0
-            ? h('p', { className: 'dsh-ic-muted' }, t('check.empty'))
-            : h(
-                'div',
-                null,
-                h('p', { className: 'dsh-ic-ok' }, t('check.ok', { count: projects.length })),
-                h(
-                'div',
-                { className: 'dsh-ic-list' },
-                projects.map((project) =>
-                  h(
-                    'div',
-                    { className: 'dsh-ic-project', key: project.id },
-                    h(
-                      'div',
-                      { style: { minWidth: 0 } },
-                      h('div', { className: 'dsh-ic-label' }, project.title),
-                      h(
-                        'div',
-                        { className: 'dsh-ic-hero-url' },
-                        `${project.id} · ${t('check.nodes', { count: project.nodeCount })}`,
-                      ),
-                    ),
-                  ),
-                ),
-                ),
-              )
-
-      return h(
-        'div',
-        { className: 'dsh-ic-field' },
-        h(
-          'div',
-          { className: 'dsh-ic-bar' },
-          h('h3', { className: 'dsh-ic-title', style: { fontSize: '13px' } }, t('check.title')),
+      }, [available, baseUrl, revision])
+      useEffect(() => { void load(); return () => { latest.current++ } }, [load])
+      return h('section', { className: 'dsh-ic-card', 'aria-busy': busy },
+        h('div', { className: 'dsh-ic-bar' }, h('h3', { className: 'dsh-ic-title' }, t('projects.title')),
           h('span', { className: 'dsh-ic-spacer' }),
-          h('button', { type: 'button', className: 'dsh-ic-button', onClick: () => void load() }, t('check.refresh')),
-        ),
-        h('p', { className: 'dsh-ic-muted' }, t('check.hint')),
-        summary,
-        failure === '' ? null : h('p', { className: 'dsh-ic-error' }, failure),
-      )
+          h('button', { className: 'dsh-ic-button', type: 'button', disabled: !available || busy, onClick: () => void load() }, t('projects.refresh'))),
+        !available ? h('p', { className: 'dsh-ic-muted' }, t('projects.noKey'))
+          : failure ? h('p', { className: 'dsh-ic-error', role: 'alert' }, failure)
+          : busy ? h('p', { className: 'dsh-ic-muted', role: 'status' }, t('projects.loading'))
+          : projects?.length ? h('div', { className: 'dsh-ic-list' }, projects.map((project) =>
+              h('div', { className: 'dsh-ic-project', key: project.id },
+                h('div', { style: { minWidth: 0, flex: 1 } },
+                  h('div', { className: 'dsh-ic-project-title', title: project.title }, project.title || t('projects.untitled')),
+                  h('p', { className: 'dsh-ic-muted' }, t('projects.nodes', { count: project.nodeCount }))),
+                h(CanvasLink, { className: 'dsh-ic-button', href: withCanvasId(openLinkOf(link, state), project.id) }, t('projects.open')))))
+          : h('p', { className: 'dsh-ic-muted' }, t('projects.empty')))
     }
 
     /** The credentialed link the Host built, or the plain list url. */
@@ -793,89 +577,36 @@ window.__ModuleLoader__.load({
       }
     }
 
-    /**
-     * The only seat this bundle registers: Infinite Canvas settings. Everything
-     * the old sidebar panel did — connection state, starting the agent, opening
-     * the canvas — lives here, because the automatic tab switch runs as a
-     * background effect rather than as UI.
-     */
     function SettingsSection({ t }) {
       const { state, agent, link, error, refresh, act, setState } = useCanvas()
       const openUrl = openLinkOf(link, state)
-      const pending =
-        state !== null && state.pending !== null && typeof state.pending === 'object' && state.pending !== undefined
-          ? state.pending
-          : null
-      const pendingId = pending !== null && typeof pending.canvasId === 'string' ? pending.canvasId : ''
-      const pendingUrl = pendingId === '' ? '' : withCanvasId(openUrl, pendingId)
-
-      return h(
-        'div',
-        { className: 'dsh-ic-page', style: { padding: '0', background: 'transparent' } },
-        h(Styles, null),
-        h(
-          'div',
-          { className: 'dsh-ic-section' },
-          h('h2', { className: 'dsh-ic-title' }, t('settings.title')),
-          h('p', { className: 'dsh-ic-muted' }, t('settings.intro')),
-          h(
-            'div',
-            { className: 'dsh-ic-actions' },
-            openUrl === ''
-              ? null
-              : h(CanvasLink, { className: 'dsh-ic-button dsh-ic-button--primary', href: openUrl }, t('open.button')),
-            h('button', { type: 'button', className: 'dsh-ic-button', onClick: () => void refresh() }, t('action.refresh')),
-          ),
-          h('p', { className: 'dsh-ic-muted' }, t('open.keepOpen')),
-          pendingUrl === ''
-            ? null
-            : h(
-                'div',
-                { className: 'dsh-ic-actions' },
-                h('span', { className: 'dsh-ic-muted' }, t('panel.pending', { title: pending.title !== '' ? pending.title : pendingId })),
-                h(CanvasLink, { className: 'dsh-ic-button dsh-ic-button--primary', href: pendingUrl }, t('open.button')),
-                pending.blocked === true ? h('span', { className: 'dsh-ic-muted' }, t('panel.blocked')) : null,
-              ),
-          h(SettingsForm, {
-            t,
-            state,
-            onSaved: (next) => {
-              setState(next)
-              void refresh()
-            },
-          }),
-          h('div', { className: 'dsh-ic-divider' }),
-          h('h3', { className: 'dsh-ic-title', style: { fontSize: '13px' } }, t('status.heading')),
+      const pending = state?.pending
+      const pendingUrl = pending?.canvasId ? withCanvasId(openUrl, pending.canvasId) : ''
+      return h('div', { className: 'dsh-ic-page' }, h(Styles),
+        h('div', { className: 'dsh-ic-section' },
+          h('header', { className: 'dsh-ic-header' },
+            h('div', null, h('h2', { className: 'dsh-ic-title' }, t('settings.title')), h('p', { className: 'dsh-ic-muted' }, t('settings.intro'))),
+            openUrl ? h(CanvasLink, { className: 'dsh-ic-button dsh-ic-button--primary', href: openUrl }, t('open.button')) : null),
           h(StatusList, { t, state, agent }),
-          h(
-            'div',
-            { className: 'dsh-ic-row', style: { justifyContent: 'flex-start' } },
-            agent !== null && agent.phase === 'starting'
-              ? h('button', { type: 'button', className: 'dsh-ic-button', disabled: true }, t('status.starting'))
-              : agent !== null && agent.managed === true && agent.running === true
-                ? h('button', { type: 'button', className: 'dsh-ic-button', onClick: () => void act('stop') }, t('action.stopAgent'))
-                : agent !== null && agent.phase === 'external'
-                  ? h('span', { className: 'dsh-ic-muted' }, t('status.external'))
-                  : h('button', { type: 'button', className: 'dsh-ic-button', onClick: () => void act('start') }, t('action.startAgent')),
-          ),
-          agent !== null && typeof agent.error === 'string' && agent.connected !== true
-            ? h('p', { className: 'dsh-ic-muted dsh-ic-code' }, agent.error)
-            : null,
-          error === '' ? null : h('p', { className: 'dsh-ic-error' }, error),
-          agent !== null && Array.isArray(agent.log) && agent.log.length > 0
-            ? h(
-                'div',
-                { className: 'dsh-ic-field' },
-                h('span', { className: 'dsh-ic-label' }, t('status.log')),
-                h('pre', { className: 'dsh-ic-log' }, agent.log.join('\n')),
-              )
-            : null,
-          h('p', { className: 'dsh-ic-muted' }, t('status.hint')),
-          h('div', { className: 'dsh-ic-divider' }),
-          h(TokenCheck, { t, state }),
-          state === null ? null : h('p', { className: 'dsh-ic-muted dsh-ic-code' }, t('status.settingsPath', { path: state.settingsPath })),
-        ),
-      )
+          pendingUrl ? h('div', { className: 'dsh-ic-row' },
+            h('p', { className: 'dsh-ic-muted' }, t('panel.pending', { title: pending.title || pending.canvasId })),
+            h(CanvasLink, { className: 'dsh-ic-button', href: pendingUrl }, t('open.button')),
+            pending.blocked ? h('p', { className: 'dsh-ic-muted' }, t('panel.blocked')) : null) : null,
+          error ? h('p', { className: 'dsh-ic-error', role: 'alert' }, error) : null,
+          h(SettingsForm, { t, state, onSaved: (next) => { setState(next); void refresh() } }),
+          h(ProjectList, { t, state, link }),
+          h('section', { className: 'dsh-ic-card' },
+            h('div', { className: 'dsh-ic-bar' }, h('h3', { className: 'dsh-ic-title' }, t('status.heading')),
+              h('span', { className: 'dsh-ic-spacer' }),
+              h('button', { type: 'button', className: 'dsh-ic-button', onClick: () => void refresh() }, t('action.refresh'))),
+            h('p', { className: 'dsh-ic-muted' }, agent?.connected ? t('status.tools', { count: agent.tools.length }) : t('status.hint')),
+            h('div', { className: 'dsh-ic-row' },
+              agent?.phase === 'starting' ? h('button', { type: 'button', className: 'dsh-ic-button', disabled: true }, t('status.starting'))
+                : agent?.managed && agent.running ? h('button', { type: 'button', className: 'dsh-ic-button', onClick: () => void act('stop') }, t('action.stopAgent'))
+                : agent?.phase === 'external' ? h('span', { className: 'dsh-ic-muted' }, t('status.external'))
+                : h('button', { type: 'button', className: 'dsh-ic-button', onClick: () => void act('start') }, t('action.startAgent'))),
+            h('details', null, h('summary', null, t('status.log')),
+              h('pre', { className: 'dsh-ic-log' }, [agent?.error, ...(agent?.log ?? [])].filter(Boolean).join('\n'))))))
     }
 
 
@@ -901,55 +632,31 @@ window.__ModuleLoader__.load({
             if (!alive) return
             try {
               const state = await readState()
-              const pending =
-                state !== null && state !== undefined && typeof state.pending === 'object' && state.pending !== null
-                  ? state.pending
-                  : null
-              const canvasId = pending !== null && typeof pending.canvasId === 'string' ? pending.canvasId : ''
-              if (canvasId !== '' && canvasId !== lastHandled) {
-                lastHandled = canvasId
+              const pending = state?.pending
+              const canvasId = typeof pending?.canvasId === 'string' ? pending.canvasId : ''
+              const revision = `${canvasId}:${pending?.at ?? ''}`
+              if (canvasId && !pending.blocked && revision !== lastHandled) {
                 const payload = await callApi('link', {
-                  method: 'POST',
-                  headers: { 'content-type': 'application/json' },
-                  body: JSON.stringify({ canvasId }),
+                  method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ canvasId }),
                 })
-                const url = payload !== undefined && typeof payload.url === 'string' ? payload.url : ''
-                if (url !== '' && alive) {
-                  const opened = window.open(url, CANVAS_TAB)
-                  if (opened === null) {
-                    // The browser refused: record it so the model can hand the
-                    // person a link instead of asking them to open settings.
-                    try {
-                      await callApi('target', {
-                        method: 'POST',
-                        headers: { 'content-type': 'application/json' },
-                        body: JSON.stringify({ canvasId, title: pending.title, blocked: true }),
-                      })
-                    } catch {
-                      // Nothing else to do; the next poll retries anyway.
-                    }
-                    return
-                  }
-                  try {
-                    opened.opener = null
-                  } catch {
-                    // Best effort.
-                  }
-                  try {
-                    await callApi('target', {
-                      method: 'POST',
-                      headers: { 'content-type': 'application/json' },
-                      body: JSON.stringify({ canvasId: '' }),
-                    })
-                  } catch {
-                    // The guard above already prevents a second navigation.
+                if (payload?.url && alive) {
+                  const opened = window.open(payload.url, CANVAS_TAB)
+                  await callApi('target', {
+                    method: 'POST', headers: { 'content-type': 'application/json' },
+                    body: JSON.stringify(opened === null ? { canvasId, title: pending.title, blocked: true } : { canvasId: '' }),
+                  })
+                  // A blocked report gets a new timestamp on Host; do not retry it automatically.
+                  lastHandled = revision
+                  if (opened !== null) {
+                    try { opened.opener = null } catch { /* Cross-origin window. */ }
                   }
                 }
               }
             } catch {
-              // A closed server or a blocked popup just means "try again later".
+              // Retry transient Host failures on the next poll.
+            } finally {
+              if (alive) timer = setTimeout(() => void tick(), 5000)
             }
-            if (alive) timer = setTimeout(() => void tick(), 5000)
           }
           timer = setTimeout(() => void tick(), 2500)
           return () => {

@@ -8,14 +8,14 @@
  *     `npx -y @tigerowo/canvas-agent` child, waits for it to listen, restarts it
  *     after a crash, and stops it when the plugin unloads.
  *  3. Same-origin HTTP routes the Web panel and the Settings page call.
- *  4. One model-facing tool, `infinite_canvas_status`.
+ *  4. Model-facing status/project tools and a bundled operation skill.
  *
  * The canvas itself is a third-party Web application and is never embedded:
  * a cross-site iframe cannot carry that site's login session, so the embedded
  * canvas would never start and never reach the local agent. The panel therefore
  * only *opens* the canvas in a real browser tab, with the agent URL and token in
  * the address hash — the same handshake `canvas-agent open` performs. The token
- * stays on this machine: `POST /token` and `POST /link` answer a same-origin
+ * is returned only to the configured canvas: `POST /token` and `POST /link` answer a same-origin
  * request only.
  *
  * No canvas id has to be pinned: an empty id opens the deployment's canvas list,
@@ -38,7 +38,7 @@ const ROUTE_PREFIX = '/infinite-canvas'
 /** Agent service the official `canvas-agent` CLI listens on by default. */
 const DEFAULT_AGENT_URL = 'http://127.0.0.1:3210'
 
-/** Public canvas deployment; the reference deployment of the upstream project. */
+/** Default deployment of the API Key-enabled TNTest fork. */
 const DEFAULT_CANVAS_BASE_URL = 'https://infic.transiglobal.com'
 
 /** MCP server namespace declared by this bundle's patch row. */
@@ -91,80 +91,72 @@ function agentTokenFile(config) {
   return join(homedir(), '.infinite-canvas', 'codex-agent.json')
 }
 
-/** Where the person's canvas-deployment API token is kept; never leaves this machine. */
+/** Locally stored API Key, sent only to its verified deployment. */
 function canvasApiFile(config) {
-  const configured = typeof config?.canvasApiTokenFile === 'string' ? config.canvasApiTokenFile.trim() : ''
+  const configured = typeof config?.canvasApiKeyFile === 'string' ? config.canvasApiKeyFile.trim() : ''
   if (configured !== '') return configured
   return join(stateDirectory(), 'canvas-api.json')
 }
 
-/**
- * Accept what people actually paste. The console snippet prints
- * `"<localStorage key> <token>"` (`console.log(k, t)`), so when whitespace is
- * present the token is the last chunk; an explicit `Bearer` prefix is stripped
- * first. A token never contains whitespace of its own.
- */
-function normalizeApiToken(input) {
+/** Only dedicated user API keys are accepted, never browser session tokens. */
+function normalizeApiKey(input) {
   if (typeof input !== 'string') return ''
-  const text = input.trim().replace(/^bearer\s+/i, '')
-  if (!/\s/.test(text)) return text
-  const parts = text.split(/\s+/).filter((part) => part !== '')
-  return parts.length === 0 ? '' : parts[parts.length - 1]
+  return input.trim().replace(/^bearer\s+/i, '')
 }
 
-/** Canvas API token: environment first, then the file the settings form writes. */
-function resolveCanvasApiToken(config) {
-  const fromEnv = normalizeApiToken(process.env.CANVAS_API_TOKEN)
+function validApiKey(key) {
+  return /^ic_[A-Za-z0-9_-]+$/.test(key)
+}
+
+/** Bind stored keys to the deployment they were verified against. */
+function resolveCanvasApiKey(config) {
   const file = canvasApiFile(config)
-  if (fromEnv !== '') return { token: fromEnv, source: 'env', file }
+  const baseUrl = resolveSettings(config).canvasBaseUrl
+  const fromEnv = normalizeApiKey(process.env.CANVAS_API_KEY)
+  if (validApiKey(fromEnv) && baseUrl === normalizeBaseUrl(config?.canvasBaseUrl ?? DEFAULT_CANVAS_BASE_URL)) {
+    return { key: fromEnv, source: 'env', file }
+  }
   const saved = readJsonFile(file)
-  const stored = normalizeApiToken(saved === undefined ? '' : saved.token)
-  if (stored !== '') return { token: stored, source: 'file', file }
-  return { token: '', source: 'none', file }
+  const key = normalizeApiKey(saved?.key)
+  if (validApiKey(key) && saved.baseUrl === baseUrl) return { key, source: 'file', file }
+  return { key: '', source: 'none', file }
 }
 
-/**
- * Call the deployment's REST API with the person's own Bearer token.
- *
- * The envelope is `{code, data, msg}`: only `code === 0` is success, and a 401
- * or a "not logged in" message means the stored token went stale. The token is
- * never put in a response body.
- */
+/** API keys only travel in Authorization headers, without following redirects. */
 async function canvasApi(config, request) {
-  const stored = resolveCanvasApiToken(config)
-  const override = normalizeApiToken(request.token)
-  const token = override !== '' ? override : stored.token
-  if (token === '') {
-    throw new Error('还没有画布站 API Token：在「无限画布 → 配置」里填入后再试')
+  const key = request.key ?? resolveCanvasApiKey(config).key
+  if (!validApiKey(key)) throw new Error('请在「无限画布」设置中配置 ic_ 开头的用户 API Key')
+  const baseUrl = request.baseUrl ?? resolveSettings(config).canvasBaseUrl
+  const target = new URL(`${baseUrl}${CANVAS_API_PREFIX}${request.path}`)
+  if (target.protocol !== 'https:' && !['127.0.0.1', 'localhost', '[::1]'].includes(target.hostname)) {
+    throw new Error('API Key 需要 HTTPS 站点地址（本机测试除外）')
   }
-  const settings = resolveSettings(config)
-  const target = new URL(`${settings.canvasBaseUrl}${CANVAS_API_PREFIX}${request.path}`)
-  const headers = { authorization: `Bearer ${token}` }
+  const headers = { authorization: `Bearer ${key}` }
   if (request.body !== undefined) headers['content-type'] = 'application/json'
   let response
   try {
     response = await fetch(target, {
       method: request.method,
       headers,
+      redirect: 'error',
       body: request.body === undefined ? undefined : JSON.stringify(request.body),
       signal: AbortSignal.timeout(CANVAS_API_TIMEOUT_MS),
     })
-  } catch (error) {
-    throw new Error(`画布站不可达：${error instanceof Error ? error.message : String(error)}`)
+  } catch {
+    throw new Error('画布站不可达，请检查站点地址与网络；认证请求不允许重定向')
   }
+  if (response.status === 401) throw new Error('API Key 无效、已过期或已撤销，请更换 Key')
+  if (response.status === 403) throw new Error('API Key 权限不足或请求额度耗尽；读取需 read，新建需 read + write')
+  if (response.status === 429) throw new Error(`API Key 请求过于频繁，请在 ${response.headers.get('retry-after') ?? '60'} 秒后重试`)
   let envelope
   try {
     envelope = await response.json()
   } catch {
     throw new Error(`画布站返回异常（HTTP ${response.status}）`)
   }
-  const message = envelope !== null && typeof envelope === 'object' && typeof envelope.msg === 'string' ? envelope.msg : ''
-  const code = envelope !== null && typeof envelope === 'object' ? envelope.code : undefined
-  if (response.status === 401 || code === 1 && /未登录|权限|登录/.test(message)) {
-    throw new Error('画布站登录凭证无效或已过期，请在浏览器里重新登录后复制新的 Token')
-  }
-  if (!response.ok || code !== 0) {
-    throw new Error(message !== '' ? message : `画布站返回 HTTP ${response.status}`)
+  if (!response.ok || envelope?.code !== 0) {
+    const message = typeof envelope?.msg === 'string' ? envelope.msg.replaceAll(key, '<key>') : ''
+    throw new Error(message || `画布站请求失败（HTTP ${response.status}）`)
   }
   return envelope.data
 }
@@ -350,7 +342,7 @@ function connectLinkOf(settings, token, canvasId) {
 function snapshot(config) {
   const settings = resolveSettings(config)
   const token = resolveToken(config)
-  const apiToken = resolveCanvasApiToken(config)
+  const apiKey = resolveCanvasApiKey(config)
   return {
     canvasBaseUrl: settings.canvasBaseUrl,
     canvasUrl: canvasListUrl(settings),
@@ -361,9 +353,10 @@ function snapshot(config) {
     tokenAvailable: token.token !== '',
     tokenSource: token.source,
     tokenFile: token.file,
-    apiTokenAvailable: apiToken.token !== '',
-    apiTokenSource: apiToken.source,
-    apiTokenFile: apiToken.file,
+    apiKeyAvailable: apiKey.key !== '',
+    apiKeySource: apiKey.source,
+    apiKeyFile: apiKey.file,
+    apiKeyRevision: readJsonFile(apiKey.file)?.savedAt ?? '',
     settingsPath: settings.path,
     settingsStored: settings.stored !== undefined,
     clientId: typeof config?.clientId === 'string' ? config.clientId : '',
@@ -404,7 +397,7 @@ async function probeAgent(agentUrl, token) {
     return {
       ...reported,
       connected: true,
-      tools: tools.map((tool) => tool?.name).filter((toolName) => typeof toolName === 'string'),
+      tools: tools.map((tool) => tool?.name).filter((toolName) => typeof toolName === 'string' && !['set_agent_state', 'read_skill_file'].includes(toolName)),
       error: undefined,
     }
   } catch (error) {
@@ -432,6 +425,7 @@ function delay(ms) {
 /** Strip anything token-shaped before a log line is kept or written. */
 function redactLog(line) {
   return line
+    .replace(/ic_[A-Za-z0-9_-]+/g, '<key>')
     .replace(/[0-9a-f]{32,}/gi, '<token>')
     .replace(/(token[^:=]*[:=]\s*)\S+/gi, '$1<token>')
 }
@@ -875,23 +869,19 @@ export function apply(ctx, config) {
           })
         }
 
-        if (path === `${ROUTE_PREFIX}/canvas-token` && method === 'POST') {
+        if (path === `${ROUTE_PREFIX}/canvas-key` && method === 'POST') {
           if (!sameOriginRequest(req, webServer)) return sendJson(res, 403, { error: 'cross-origin request rejected' })
           const body = await readJsonBody(req)
-          if (typeof body.token !== 'string') return sendJson(res, 400, { error: 'token 必须是字符串' })
-          const candidate = normalizeApiToken(body.token)
-          const file = canvasApiFile(config)
-          if (candidate === '') {
-            writeJsonFile(file, { version: SETTINGS_VERSION, token: '' })
-            return sendJson(res, 200, snapshot(config))
+          if (typeof body.key !== 'string') return sendJson(res, 400, { error: 'key 必须是字符串' })
+          const key = normalizeApiKey(body.key)
+          const baseUrl = body.canvasBaseUrl === undefined ? resolveSettings(config).canvasBaseUrl : normalizeBaseUrl(body.canvasBaseUrl)
+          if (baseUrl === undefined) return sendJson(res, 400, { error: '画布站地址无效' })
+          if (key !== '') await canvasApi(config, { method: 'GET', path: '/canvas/projects', key, baseUrl })
+          writeJsonFile(canvasApiFile(config), { key, baseUrl, savedAt: new Date().toISOString() })
+          if (key !== '' && body.canvasBaseUrl !== undefined) {
+            const { path: file, usable } = settingsFromFile(config)
+            writeJsonFile(file, { ...usable, version: SETTINGS_VERSION, canvasBaseUrl: baseUrl })
           }
-          // Verify before storing, so one typo cannot break every later call.
-          try {
-            await canvasApi(config, { method: 'GET', path: '/canvas/projects', token: candidate })
-          } catch (error) {
-            return sendJson(res, 400, { error: error instanceof Error ? error.message : String(error) })
-          }
-          writeJsonFile(file, { version: SETTINGS_VERSION, token: candidate, savedAt: new Date().toISOString() })
           return sendJson(res, 200, snapshot(config))
         }
 
@@ -901,6 +891,7 @@ export function apply(ctx, config) {
           const settings = resolveSettings(config)
           const token = resolveToken(config)
           const target = connectLinkOf(settings, token.token, requested).url
+          if (pending?.canvasId === requested) pending = null
           res.writeHead(302, { location: target, 'cache-control': 'no-store' })
           return res.end()
         }
@@ -956,9 +947,12 @@ export function apply(ctx, config) {
           if (body.embedCredentials !== undefined) next.embedCredentials = body.embedCredentials !== false
           if (body.autoStart !== undefined) next.autoStart = body.autoStart !== false
           for (const key of Object.keys(next)) if (next[key] === undefined) delete next[key]
+          const previous = resolveSettings(config)
           writeJsonFile(file, next)
-          // Turning supervision on is a request to have an agent running now.
-          if (body.autoStart === true) void supervisor.start()
+          if (body.agentUrl !== undefined && previous.agentUrl !== next.agentUrl) {
+            await supervisor.stop('configuration')
+            if (resolveSettings(config).autoStart) void supervisor.start()
+          } else if (body.autoStart === true) void supervisor.start()
           return sendJson(res, 200, snapshot(config))
         }
 
@@ -973,6 +967,15 @@ export function apply(ctx, config) {
       () => webServer.register({ kind: 'prefix', path: ROUTE_PREFIX, handler }),
       'dsh-infinite-canvas: routes',
     )
+  })
+
+  ctx.inject(['skills'], (skillCtx) => {
+    skillCtx.effect(() => skillCtx.skills.register({
+      name: 'infinite-canvas',
+      description: 'Use Infinite Canvas in Harness: list, create or select a canvas with the configured API Key, then edit its live nodes using the canvas MCP tools. Handles connection and browser handoff.',
+      source: 'runtime',
+      content: readFileSync(new URL('./skills/infinite-canvas/SKILL.md', import.meta.url), 'utf8').replace(/^---[\s\S]*?---\s*/, ''),
+    }), 'dsh-infinite-canvas: operation skill')
   })
 
   ctx.inject(['tools'], (toolCtx) => {
@@ -999,9 +1002,9 @@ export function apply(ctx, config) {
                 autoStart: { type: 'boolean', description: 'Whether the plugin keeps the local agent running for the user.' },
                 connected: { type: 'boolean', description: 'Whether a canvas tab is connected to the agent.' },
                 tokenAvailable: { type: 'boolean', description: 'Whether a connect token was found on this machine.' },
-                canvasApiTokenAvailable: {
+                canvasApiKeyAvailable: {
                   type: 'boolean',
-                  description: 'Whether a canvas-deployment API token is stored, which enables infinite_canvas_projects.',
+                  description: 'Whether a dedicated user API Key is configured for infinite_canvas_projects (read to list, read + write to create).',
                 },
                 pendingCanvasId: {
                   type: 'string',
@@ -1033,7 +1036,7 @@ export function apply(ctx, config) {
                 'autoStart',
                 'connected',
                 'tokenAvailable',
-                'canvasApiTokenAvailable',
+                'canvasApiKeyAvailable',
                 'pendingCanvasId',
                 'pendingCanvasTitle',
                 'pendingBlocked',
@@ -1065,7 +1068,7 @@ export function apply(ctx, config) {
                 ? `本地 Canvas Agent 未运行。面板上的「启动 Agent」会自动拉起 npx -y @tigerowo/canvas-agent@latest（默认监听 ${state.agentUrl}）。`
                 : !probe.connected
                   ? '本地 Agent 已运行，但还没有画布连接：在「无限画布」面板点「打开画布」，用浏览器打开带凭证的列表页并选一张画布；也可以用 infinite_canvas_projects 的 create 新建，面板会把同一个标签页切过去。'
-                  : '画布已连接，可直接调用 mcp__infinite-canvas__* 工具；当前画布 id 用 get_canvas_summary 读取，它由所连接的画布页决定，没有任何设置记录它。'
+                  : '画布已连接，先用 get_canvas_summary 核对目标 ID，再调用 mcp__infinite-canvas__* 工具；当前画布 id 用 get_canvas_summary 读取，它由所连接的画布页决定，没有任何设置记录它。'
             const finalHint = blocked
               ? `浏览器拦下了自动打开：把 openLink 原样发给用户，用户点一下就会跳到带凭证的画布页（${openLink}）。`
               : hint
@@ -1079,7 +1082,7 @@ export function apply(ctx, config) {
               autoStart: state.autoStart,
               connected: probe.connected === true,
               tokenAvailable: state.tokenAvailable,
-              canvasApiTokenAvailable: state.apiTokenAvailable,
+              canvasApiKeyAvailable: state.apiKeyAvailable,
               tools: probe.tools,
               mcpServerName: state.mcpServerName,
               settingsPath: state.settingsPath,
@@ -1107,12 +1110,13 @@ export function apply(ctx, config) {
         toolCtx.tools.register({
           name: 'infinite_canvas_projects',
           description:
-            'List the canvases in the configured Infinite Canvas deployment, or create a new one. The canvas id is never stored: whichever canvas the browser tab shows is the agent context (read it with get_canvas_summary). Create only when the user asked for a new canvas. After creating, call infinite_canvas_status: if pendingBlocked is true (the browser refused the automatic tab switch because no canvas tab was open yet), paste its openLink to the user so one click opens the credentialed canvas page.',
+            'Use the configured user API Key to list (read), create (read + write), or open an existing canvas by id. Never ask for a browser session token. Read the infinite-canvas skill before multi-step editing. The canvas id is never stored: whichever canvas the browser tab shows is the agent context (read it with get_canvas_summary). Create only when the user asked for a new canvas. After creating, call infinite_canvas_status: if pendingBlocked is true (the browser refused the automatic tab switch because no canvas tab was open yet), paste its openLink to the user so one click opens the credentialed canvas page.',
           parameters: {
             type: 'object',
             properties: {
-              action: { type: 'string', enum: ['list', 'create'], description: 'list canvases, or create a new empty one.' },
+              action: { type: 'string', enum: ['list', 'create', 'open'], description: 'list canvases, create a new empty one, or open an existing canvas by id.' },
               title: { type: 'string', description: 'Title for a new canvas; defaults to 未命名画布.' },
+              canvasId: { type: 'string', description: 'Existing canvas id from list; required for open.' },
             },
             required: ['action'],
             additionalProperties: false,
@@ -1158,7 +1162,7 @@ export function apply(ctx, config) {
             },
           },
           async execute(args) {
-            const action = args !== null && typeof args === 'object' && args.action === 'create' ? 'create' : 'list'
+            const action = args?.action ?? 'list'
             try {
               if (action === 'create') {
                 const rawTitle = args !== null && typeof args === 'object' ? args.title : undefined
@@ -1179,6 +1183,11 @@ export function apply(ctx, config) {
               }
               const raw = await canvasApi(config, { method: 'GET', path: '/canvas/projects' })
               const projects = (Array.isArray(raw) ? raw : []).map(summarizeProject).filter((item) => item !== undefined)
+              if (action === 'open') {
+                const project = projects.find((item) => item.id === args.canvasId)
+                if (!project) throw new Error('画布不存在，请先列出画布并核对 ID')
+                pending = { canvasId: project.id, title: project.title, at: Date.now() }
+              } else if (action !== 'list') throw new Error('不支持的画布操作')
               return { ok: true, projects }
             } catch (error) {
               return { ok: false, projects: [], error: error instanceof Error ? error.message : String(error) }

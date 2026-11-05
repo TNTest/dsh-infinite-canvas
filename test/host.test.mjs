@@ -30,6 +30,7 @@ function check(name, ok, detail) {
 function makeHarness(config) {
   let route
   const tools = new Map()
+  const skills = new Map()
   const disposers = []
   const fakeWebCtx = {
     webServer: {
@@ -61,6 +62,10 @@ function makeHarness(config) {
       inject(deps, callback) {
         if (deps.includes('webServer')) callback(fakeWebCtx)
         if (deps.includes('tools')) callback(fakeToolCtx)
+        if (deps.includes('skills')) callback({
+          effect: fakeToolCtx.effect,
+          skills: { register(skill) { skills.set(skill.name, skill); return () => skills.delete(skill.name) } },
+        })
       },
       effect(factory) {
         disposers.push(factory())
@@ -106,6 +111,7 @@ function makeHarness(config) {
     call,
     tool,
     projectsTool,
+    skills,
     async dispose() {
       for (const dispose of disposers) await dispose(undefined)
     },
@@ -232,6 +238,7 @@ check('supervisor reports the agent running', live.running === true && live.phas
 check('supervisor owns the child', live.managed === true && typeof live.pid === 'number', `pid=${live.pid}`)
 check('spawned agent is reachable', (await fetch(`http://127.0.0.1:${port}/config`)).ok)
 check('canvas tools read through the agent', Array.isArray(live.tools) && live.tools.includes('fake_tool'), JSON.stringify(live.tools))
+check('internal Codex tools are excluded from the advertised tools', live.tools.length === 1)
 const logText = Array.isArray(live.log) ? live.log.join('\n') : ''
 check('agent console is captured', logText.includes('Local URL'), logText.slice(0, 60).replace(/\n/g, ' | '))
 check('connect token never reaches the log', !logText.includes('f'.repeat(64)), 'redacted')
@@ -255,9 +262,10 @@ await supervised.dispose()
 // ---------------------------------------------------------------------------
 // 3. The canvas-API bridge: token check, project list, project create, links.
 // ---------------------------------------------------------------------------
+let apiFailure = null
 const apiRequests = []
 const apiServer = createServer((req, res) => {
-  const authorized = req.headers.authorization === 'Bearer good-token'
+  const authorized = req.headers.authorization === 'Bearer ic_good_test_key'
   let body = ''
   req.on('data', (chunk) => {
     body += chunk
@@ -268,6 +276,7 @@ const apiServer = createServer((req, res) => {
       res.writeHead(status, { 'content-type': 'application/json' })
       res.end(JSON.stringify(payload))
     }
+    if (apiFailure) return send(apiFailure.status, apiFailure.body)
     if (!authorized) return send(401, { code: 1, data: null, msg: '未登录或权限不足' })
     if (req.method === 'GET' && req.url === '/api/v1/canvas/projects') {
       return send(200, {
@@ -290,38 +299,38 @@ const bridged = makeHarness({
   autoStart: false,
   settingsPath: join(work, 'settings-3.json'),
   tokenFile,
-  canvasApiTokenFile: apiTokenPath,
+  canvasApiKeyFile: apiTokenPath,
 })
 
 res = await bridged.call('GET', '/infinite-canvas/state')
-check('no canvas API token yet', res.json().apiTokenAvailable === false)
+check('no canvas API Key yet', res.json().apiKeyAvailable === false)
 res = await bridged.call('GET', '/infinite-canvas/projects')
 check('projects without a token → 400', res.status === 400, res.body.slice(0, 80))
 
-res = await bridged.call('POST', '/infinite-canvas/canvas-token', {
-  body: { token: 'wrong-token' },
+res = await bridged.call('POST', '/infinite-canvas/canvas-key', {
+  body: { key: 'ic_wrong_test_key' },
   origin: 'http://127.0.0.1:62692',
 })
-check('a bad canvas API token is rejected', res.status === 400, res.body.slice(0, 80))
+check('a bad canvas API Key is rejected', res.status === 400, res.body.slice(0, 80))
 check('a rejected token is not stored', !existsSync(apiTokenPath))
 
-res = await bridged.call('POST', '/infinite-canvas/canvas-token', {
-  body: { token: 'good-token' },
+res = await bridged.call('POST', '/infinite-canvas/canvas-key', {
+  body: { key: 'ic_good_test_key' },
   origin: 'http://127.0.0.1:62692',
 })
-check('a working token is verified and stored', res.status === 200 && res.json().apiTokenAvailable === true, res.body.slice(0, 80))
+check('a working token is verified and stored', res.status === 200 && res.json().apiKeyAvailable === true, res.body.slice(0, 80))
 check('the token file is private', (statSync(apiTokenPath).mode & 0o777) === 0o600, `mode=${(statSync(apiTokenPath).mode & 0o777).toString(8)}`)
-check('the state never leaks the canvas API token', !res.body.includes('good-token'))
+check('the state never leaks the canvas API Key', !res.body.includes('ic_good_test_key'))
 
-res = await bridged.call('POST', '/infinite-canvas/canvas-token', {
-  body: { token: 'infinite-canvas-auth-token-v1 good-token' },
+res = await bridged.call('POST', '/infinite-canvas/canvas-key', {
+  body: { key: 'infinite-canvas-auth-token-v1 ic_good_test_key' },
   origin: 'http://127.0.0.1:62692',
 })
-check('a pasted "key token" pair keeps only the token', res.status === 200 && res.json().apiTokenAvailable === true, res.body.slice(0, 90))
+check('browser session token pairs are rejected', res.status === 400, res.body.slice(0, 90))
 
-res = await bridged.call('POST', '/infinite-canvas/canvas-token', { body: { token: '' } })
-check('the token can be cleared', res.status === 200 && res.json().apiTokenAvailable === false)
-await bridged.call('POST', '/infinite-canvas/canvas-token', { body: { token: 'good-token' } })
+res = await bridged.call('POST', '/infinite-canvas/canvas-key', { body: { key: '' } })
+check('the token can be cleared', res.status === 200 && res.json().apiKeyAvailable === false)
+await bridged.call('POST', '/infinite-canvas/canvas-key', { body: { key: 'ic_good_test_key' } })
 
 res = await bridged.call('GET', '/infinite-canvas/projects')
 check('GET projects → 200', res.status === 200, res.body.slice(0, 90))
@@ -358,6 +367,7 @@ check('state reports the blocked pending canvas', res.json().pending.blocked ===
 res = await bridged.call('GET', '/infinite-canvas/open?canvas=p1')
 check('/open redirects to the canvas page', res.status === 302 && String(res.location).includes('/canvas/p1#'), `${res.status} ${String(res.location).slice(0, 60)}`)
 check('/open carries the agent handshake', String(res.location).includes('agentToken='))
+check('manual open clears the blocked handoff', (await bridged.call('GET', '/infinite-canvas/state')).json().pending === null)
 res = await bridged.call('GET', '/infinite-canvas/open?canvas=https://x/y')
 check('/open refuses a bad canvas id', res.status === 400)
 
@@ -371,12 +381,31 @@ check('an invalid canvas id is refused', (await bridged.call('POST', '/infinite-
 
 const listValue = await bridged.projectsTool.execute({ action: 'list' }, { signal: new AbortController().signal })
 check('projects tool lists canvases', listValue.ok === true && listValue.projects.length === 1 && listValue.projects[0].id === 'p1')
-check('projects tool offers list and create', JSON.stringify(bridged.projectsTool.parameters.properties.action.enum) === '["list","create"]')
+check('projects tool offers list, create and open', JSON.stringify(bridged.projectsTool.parameters.properties.action.enum) === '["list","create","open"]')
 const createValue = await bridged.projectsTool.execute({ action: 'create', title: 'MCP 新建' }, { signal: new AbortController().signal })
 check('projects tool creates a canvas', createValue.ok === true && createValue.created.title === 'MCP 新建' && createValue.created.canvasUrl.includes('/canvas/'))
 const afterCreate = await bridged.call('GET', '/infinite-canvas/state')
 check('a tool-created canvas is handed to the panel too', afterCreate.json().pending.canvasId === createValue.created.id)
 check('projects tool reports failures instead of throwing', (await bridged.projectsTool.execute({ action: 'list' }, { signal: new AbortController().signal })).ok === true)
+check('operation skill is registered automatically', bridged.skills.get('infinite-canvas')?.content.includes('get_canvas_summary'))
+const opened = await bridged.projectsTool.execute({ action: 'open', canvasId: 'p1' })
+check('open existing canvas succeeds without creating', opened.ok === true && (await bridged.call('GET', '/infinite-canvas/state')).json().pending.canvasId === 'p1')
+check('opening unknown canvas is rejected', (await bridged.projectsTool.execute({ action: 'open', canvasId: 'missing' })).ok === false)
+for (const [status, msg, expected] of [[401, 'bad', '已撤销'], [403, 'bad', '权限不足'], [429, 'bad', '频繁'], [200, 'business failed', 'business failed'], [503, 'temporary', 'temporary']]) {
+  apiFailure = { status, body: { code: 1, data: null, msg } }
+  const failed = await bridged.projectsTool.execute({ action: 'list' })
+  check(`HTTP ${status} error has actionable meaning`, !failed.ok && failed.error.includes(expected), failed.error)
+}
+apiFailure = { status: 200, body: { code: 1, msg: 'echo ic_good_test_key' } }
+check('upstream error cannot echo key', !(await bridged.projectsTool.execute({ action: 'list' })).error.includes('ic_good_test_key'))
+apiFailure = null
+const callsBeforeChange = apiRequests.length
+await bridged.call('POST', '/infinite-canvas/settings', { body: { canvasBaseUrl: 'https://other.example' } })
+check('changing deployment makes old key unavailable', (await bridged.call('GET', '/infinite-canvas/state')).json().apiKeyAvailable === false)
+check('changed deployment cannot receive stored key', (await bridged.projectsTool.execute({ action: 'list' })).ok === false && apiRequests.length === callsBeforeChange)
+check('key configuration rejects cross-origin requests', (await bridged.call('POST', '/infinite-canvas/canvas-key', { origin: 'https://evil.example', body: { key: 'ic_fake' } })).status === 403)
+check('legacy session tokens are rejected', (await bridged.call('POST', '/infinite-canvas/canvas-key', { body: { key: 'jwt-session-token' } })).status === 400)
+check('remote plaintext key transport is rejected', (await bridged.call('POST', '/infinite-canvas/canvas-key', { body: { key: 'ic_fake', canvasBaseUrl: 'http://example.com' } })).status === 400)
 const renderedProjects = bridged.projectsTool.output.render({}, listValue)
 check('projects tool renders text content', Array.isArray(renderedProjects) && renderedProjects[0]?.text.includes('p1'))
 
