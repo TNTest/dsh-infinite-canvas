@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Infinite Canvas",
-    "description": "Connect Infinite Canvas with a user API Key, open account canvases, and guide live editing with MCP tools and a bundled skill."
+    "description": "Operate backend canvases, nodes and media tasks with API Key; independently launch the local Agent for the web app."
   }
 }

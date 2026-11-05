@@ -2,79 +2,66 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-通过用户 API Key、精简设置页和实时画布 MCP 工具，将 [Infinite Canvas](https://github.com/TNTest/infinite-canvas) 接入 DeepSeek Harness。
+通过用户 API Key，让 DeepSeek Harness 直接操作后端已保存的 [Infinite Canvas](https://github.com/TNTest/infinite-canvas) 画布。另保留独立、可选的本地 Agent 启动器，供画布网页使用。
 
 ## 快速开始
 
-1. 在 Harness 中通过 `https://github.com/TNTest/dsh-infinite-canvas` 安装本插件包。
-2. 打开「设置 → 无限画布」。默认站点为 `https://infic.transiglobal.com`。
-3. 在画布站的「账户 → API Key」创建 `ic_` 开头的专用用户 Key。列出画布需要 `read`，新建画布需要 `read + write`。将 Key 粘贴到插件中，点击「验证并保存」。无需浏览器控制台或会话 Token。
-4. 点击「打开画布」，或在「我的画布」中打开指定画布。如果画布站要求登录，需单独登录；只保留一个已连接的画布标签页。
-5. 告诉智能体要在哪张画布上完成什么任务。内置的 `infinite-canvas` skill 会引导它选择画布、检查连接并编辑。
+1. 通过 `https://github.com/TNTest/dsh-infinite-canvas` 安装插件包。
+2. 打开「设置 → 无限画布」，默认站点为 `https://infic.transiglobal.com`。
+3. 在画布站「账户 → API Key」创建专用的 `ic_` 用户 Key，粘贴到插件后点击「验证并保存」。读取需要 `read`，编辑画布需要 `read + write`，生成需要 `generate`，删除资源需要 `delete`。
+4. 让 Harness 列出、新建或编辑画布。浏览器关闭、本地 Agent 停止时，后端工具仍然可用；插件自动注册内置的 `infinite-canvas` skill。
+5. 「查看画布」是可选入口。网页已经打开时，请先保存网页改动，再执行 API 操作，完成后刷新网页查看结果。
 
-本机需要 Node.js 22+ 和 `npx`。插件会自动启动并监管 `npx -y @tigerowo/canvas-agent@latest`；首次启动需要下载依赖，可能耗时较长。
+无需在浏览器控制台获取登录 Token。API 鉴权也不会代替浏览器登录网站。
 
-## 插件功能
+## 两条独立链路
 
-- 配置站点地址和用户 API Key，显示账户画布列表，支持直接打开指定画布。
-- 提供 `infinite_canvas_projects`，支持 `list`、`create`、`open`。新建需要 `read + write`；打开操作通过 ID 选择已有画布。
-- 提供 `infinite_canvas_status`，查询本地 Agent、实时画布连接及浏览器打开状态。
-- 将官方 canvas-agent MCP 工具接入为 `mcp__infinite-canvas__<tool>`。实时节点编辑需要画布页面连接到本地 Agent。
-- 插件启用时自动注册内置的 `infinite-canvas` skill，无需单独安装技能。
+| 链路 | 用途 | 依赖 |
+| --- | --- | --- |
+| 后端 API 工具 | 已保存画布、节点、连线、分组、布局和后端媒体任务 | 站点地址和 API Key |
+| 可选网页 Agent 启动器 | 一键启停画布网页右侧智能体使用的本地 Agent | Node.js 22+、`npx`；使用网页智能体时需打开画布页面 |
 
-API Key 用于后端接口鉴权，不会将浏览器登录到画布站，也不替代本地 Agent 的连接令牌。插件自动读取 Agent 令牌，仅用于浏览器连接握手；用户 API Key 不会出现在浏览器链接中。
+启动器保留随 Harness 启动、可配置的本地地址，以及「打开网页并连接 Agent」。默认命令为 `npx -y @tigerowo/canvas-agent@latest`，首次启动可能需要下载依赖。插件自动读取 Agent 连接令牌，仅在明确打开网页并连接时用于握手；它与用户 API Key 相互独立。
 
-智能体新建或打开画布时，插件尝试复用同一个具名浏览器标签页。如果浏览器拦截打开，智能体可将 `infinite_canvas_status` 返回的 `openLink` 交给用户。编辑前，skill 要求调用 `get_canvas_summary`，核对目标画布 ID。
+新建、编辑画布不会打开或切换浏览器标签页。后端编辑不再依赖 stdio MCP 桥。为兼容旧版升级，保留但默认停用 `infinite-canvas-mcp` 行；如果旧配置覆盖层显式启用了该行，请将其停用。网页端 Agent 不需要这条 Harness MCP 配置。
 
-## 配置与凭证
+## 智能体工具
 
-常规使用只需填写站点地址和用户 API Key。「高级设置」包含本地 Agent 地址（默认 `http://127.0.0.1:3210`）、自动启动和浏览器自动连接。诊断日志默认收起。
-
-| 项目 | 位置或配置方式 |
+| 工具 | 操作 |
 | --- | --- |
-| 界面设置 | `$DSH_HOME/infinite-canvas/settings.json` |
-| 用户 API Key | `$DSH_HOME/infinite-canvas/canvas-api.json`，权限 `0600`，绑定到已验证的站点地址 |
-| 环境变量覆盖 | `CANVAS_API_KEY`，仅用于插件行配置中的站点地址 |
-| 本地 Agent 连接令牌 | `~/.infinite-canvas/codex-agent.json`，由 canvas-agent 写入 |
-| 脱敏 Agent 日志 | `$DSH_HOME/infinite-canvas/agent.log` |
-| 插件行与命令默认值 | `cordis.patch.yml` |
+| `infinite_canvas_status` | 独立检查后端连接和可选启动器状态 |
+| `infinite_canvas_projects` | `list`、`create`、`rename`、`delete`；`open` 仅返回普通查看链接 |
+| `infinite_canvas_nodes` | `summary`、`query`、`get`、`upstream`、`downstream`、`connected`；`create_text`、`create_primary_script`、`create_media`、`update_text`、`rename`、`move`、`delete`、`connect`、`disconnect`、`group`、`arrange` |
+| `infinite_canvas_catalog` | 查询公开模型/渠道、已保存工作流、个人/系统技能和系统技能文件 |
+| `infinite_canvas_media` | `submit`、只读 `status`、将结果回填节点的 `sync`、停止后端任务的 `stop` |
 
-Key 仅通过 `Authorization` 请求头发送。远程站点必须使用 HTTPS，本机测试允许 HTTP。带认证的 API 请求不会跟随重定向。更换站点地址后，旧 Key 不再可用，需要为新地址重新验证 Key；旧浏览器会话 Token 不会继续使用。
+节点和媒体调用都需明确指定 `canvasId`。读取返回 `project.revision`；编辑节点、重命名/删除画布、提交/回填媒体任务时，需提供最新的 `expectedRevision`。写入保留项目中无关字段，并回读确认结果。同一插件内的写操作按画布串行执行，已知过期版本会被拒绝。**当前后端没有原子版本比较更新接口**，因此网页与 API 同时编辑仍可能竞争，不能将这些检查视为实时协同同步。
 
-Key 不会出现在状态响应、模型工具输出或日志中。`401` 表示 Key 无效、过期或已撤销；`403` 表示权限不足或请求额度耗尽；`429` 表示需要等待后重试。生成操作可能消耗账户算力点，仅应在用户要求时执行。
+删除节点会清理画布连线、分组/批次成员关系和聊天中失效的媒体引用，但保留实际文件、后端任务及生成历史。不支持嵌套分组或对批次节点分组；单独移动批次节点及批次布局仍由网页完成。鼠标选区、网页未保存状态、本地 Codex 会话和浏览器私有模型配置不属于这套 API 的能力。
 
-更改本地 Agent 端口时，还需在 Harness 配置覆盖层的 `infinite-canvas-mcp` 行设置 `env.CANVAS_AGENT_PORT`，然后重启 Harness，两端端口必须一致。如果其他画布会话已占用 `3210`，可以使用独立端口。
+## 后端媒体任务
 
-```yaml
-- id: infinite-canvas
-  config:
-    agentUrl: http://127.0.0.1:3211
-- id: infinite-canvas-mcp
-  config:
-    serverName: infinite-canvas
-    transport: stdio
-    command: npx
-    args: ['-y', '@tigerowo/canvas-agent@latest', 'mcp']
-    failOnStartupError: false
-    env:
-      CANVAS_AGENT_PORT: "3211"
-```
+先用 `create_media` 准备图片、视频或音频节点，该操作不会开始生成。`submit` 需明确提供后端 `channelId`，以及包含 `model` 和模型所需参数的 `request` JSON 对象，不能将 Key 放入该对象。支持 JSON 的图片编辑请求可使用 `edit: true`，并明确提供参考素材。
 
-界面设置的优先级高于行配置默认值，需在「高级设置」中同步修改为相同地址。
+`status` 只读取任务；`sync` 将当前任务状态、主要结果地址和媒体元数据写入节点。额外结果地址保留在任务响应中，不复刻网页批次结果界面。工具可发现工作流，但暂不实现工作流执行、multipart 上传、浏览器本地渠道或任意模型专用参数转译。
 
-## 使用边界
+生成需要用户授权，并可能消耗算力点。提交请求前会保存任务 ID，已提交节点不能再次提交。超时导致提交结果不确定时，应先按保留的任务 ID 查询，不要重发。停止任务不等于删除，也不保证退款。即使画布可编辑，仍需满足对应权限、模型请求格式和渠道可用性。
 
-- 后端对接 [TNTest/infinite-canvas](https://github.com/TNTest/infinite-canvas) 的 API Key 能力，使用 `{ code, data, msg }` 响应格式。
-- 列出和新建画布通过后端完成；实时节点工具仍需浏览器和本地 Agent。多个已连接标签页可能导致 Agent 无法判断目标。
-- 插件设置不保存画布选择，当前编辑上下文由已连接的浏览器标签页决定。
-- 插件卸载时会停止其托管的 Agent。强制退出 Harness 可能遗留进程，下次启动会检测已有服务。
+## 凭证与本地文件
+
+- 界面设置：`$DSH_HOME/infinite-canvas/settings.json`。
+- API Key：`$DSH_HOME/infinite-canvas/canvas-api.json`，权限 `0600`，绑定已验证的站点地址；`CANVAS_API_KEY` 可覆盖插件行配置中站点对应的 Key。
+- 可选网页 Agent 令牌：`~/.infinite-canvas/codex-agent.json`；启动器脱敏日志：`$DSH_HOME/infinite-canvas/agent.log`。
+
+Key 仅通过 `Authorization` 请求头发送，不放入链接或模型工具输出。远程站点必须使用 HTTPS，本机测试允许 HTTP。带认证的请求不跟随重定向。更换站点后，旧 Key 不再可用，需为新地址重新验证 Key。
 
 ## 验证
 
 ```bash
+node test/canvas.test.mjs
 node test/host.test.mjs
 node test/client.test.mjs
 npm pack --dry-run --ignore-scripts
 ```
 
-Host 测试覆盖 API Key 验证与站点绑定、权限和限流错误、同源检查、画布操作、skill 注册和 Agent 监管。Client 测试渲染设置页并验证配置交互及单标签页切换。测试使用虚构凭证和本地模拟服务。
+测试覆盖图结构编辑与数据保留、版本冲突、分组移动、模拟媒体任务的提交/恢复/回填、HTTP 凭证隔离、本地 Agent 停止时的后端编辑、可选 Agent 启停，以及无自动浏览器导航的设置页渲染。真实收费生成需要针对所选模型和渠道另行授权验收。

@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "无限画布",
-    "description": "通过用户 API Key 连接无限画布，直接打开账户画布，并通过 MCP 工具与内置技能引导智能体编辑。"
+    "description": "用 API Key 直接操作后端画布、节点和媒体任务；另提供独立的网页本地 Agent 一键启动入口。"
   }
 }

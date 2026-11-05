@@ -2,79 +2,66 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-Connect [Infinite Canvas](https://github.com/TNTest/infinite-canvas) to DeepSeek Harness with a user API Key, a compact settings page, and live canvas MCP tools.
+Operate saved [Infinite Canvas](https://github.com/TNTest/infinite-canvas) projects directly from DeepSeek Harness through a user API Key. An independent optional launcher starts the local Agent for the canvas web app.
 
 ## Quick start
 
-1. Install this plugin bundle in Harness from `https://github.com/TNTest/dsh-infinite-canvas`.
+1. Install the plugin bundle from `https://github.com/TNTest/dsh-infinite-canvas`.
 2. Open **Settings → Infinite Canvas**. The default deployment is `https://infic.transiglobal.com`.
-3. In the canvas site's **Account → API Key**, create a dedicated user key beginning with `ic_`. Grant `read` to list canvases and `read + write` to create them. Paste it into the plugin and choose **Verify & save**. No browser console or session token is needed.
-4. Choose **Open canvas** or open an item in **My canvases**. Sign in to the canvas site separately if needed. Keep one connected canvas tab.
-5. Ask the agent to work on a canvas. The bundled `infinite-canvas` skill guides selection, connection checks and live editing.
+3. Create a dedicated `ic_` user Key in the canvas site's **Account → API Key**, paste it into the plugin, then choose **Verify & save**. Reading needs `read`; canvas edits need `read + write`; generation needs `generate`; deleting resources needs `delete`.
+4. Ask Harness to list, create or edit a canvas. Backend tools work with the browser closed and the local Agent stopped. The bundled `infinite-canvas` skill is registered automatically.
+5. **View canvases** is optional. If the page is already open, save its edits before API operations and reload it afterwards to see saved changes.
 
-Node.js 22+ and `npx` are required. The plugin starts and supervises `npx -y @tigerowo/canvas-agent@latest`; its first start downloads dependencies and can take a while.
+No browser-console login token is needed. API authentication does not sign the browser into the website.
 
-## What the plugin does
+## Two independent paths
 
-- Configures the deployment URL and user API Key, and lists account canvases with direct open actions.
-- Exposes `infinite_canvas_projects` with `list`, `create` and `open` actions. Creating requires `read + write`; opening selects an existing canvas by ID.
-- Exposes `infinite_canvas_status` for the local Agent, live canvas connection and browser handoff state.
-- Bridges the official canvas-agent MCP tools as `mcp__infinite-canvas__<tool>`. Live node edits require a canvas page connected to the local Agent.
-- Registers the bundled `infinite-canvas` skill automatically while the plugin is enabled; no separate skill installation is needed.
+| Path | Purpose | Requirements |
+| --- | --- | --- |
+| Backend API tools | Saved canvases, nodes, connections, groups, layout and backend media tasks | Deployment URL and API Key |
+| Optional web-Agent launcher | Start/stop the local Agent used by the assistant in the canvas web app | Node.js 22+, `npx`, and an open canvas page when using that assistant |
 
-The API Key authorizes backend requests. It does not sign the browser into the canvas site or replace the local Agent's connection token. The plugin reads that Agent token automatically and uses it only for the browser connection handshake; it never puts the user API Key in a browser link.
+The launcher retains automatic startup, a configurable local address and **Open web app with Agent**. Its default command is `npx -y @tigerowo/canvas-agent@latest`; the first start may download dependencies. The Agent's connection token is read automatically and used only for an explicitly requested web handshake. It is independent of the user API Key.
 
-When an agent creates or opens a canvas, the plugin attempts to reuse the same named browser tab. If the browser blocks opening, the agent can give the user the `openLink` returned by `infinite_canvas_status`. Before editing, the skill requires checking `get_canvas_summary` against the intended canvas ID.
+Creating or editing a canvas never opens or switches browser tabs. The plugin no longer uses a stdio MCP bridge for backend editing. The old `infinite-canvas-mcp` row ships disabled for upgrades; disable any old profile override that explicitly enables it. The web Agent does not need that Harness MCP row.
 
-## Settings and credentials
+## Agent tools
 
-Normal setup needs only the site URL and user API Key. **Advanced settings** contains the local Agent URL (default `http://127.0.0.1:3210`), automatic startup and automatic browser connection. Connection diagnostics are collapsed by default.
-
-| Item | Location / configuration |
+| Tool | Actions |
 | --- | --- |
-| UI settings | `$DSH_HOME/infinite-canvas/settings.json` |
-| User API Key | `$DSH_HOME/infinite-canvas/canvas-api.json`, mode `0600`, bound to its verified deployment URL |
-| Environment override | `CANVAS_API_KEY`, used only with the deployment URL from the plugin row config |
-| Local Agent connection token | `~/.infinite-canvas/codex-agent.json`, written by canvas-agent |
-| Redacted Agent log | `$DSH_HOME/infinite-canvas/agent.log` |
-| Bundle rows / command defaults | `cordis.patch.yml` |
+| `infinite_canvas_status` | Check backend connectivity independently from the optional launcher |
+| `infinite_canvas_projects` | `list`, `create`, `rename`, `delete`; `open` only returns a plain viewing URL |
+| `infinite_canvas_nodes` | `summary`, `query`, `get`, `upstream`, `downstream`, `connected`; `create_text`, `create_primary_script`, `create_media`, `update_text`, `rename`, `move`, `delete`, `connect`, `disconnect`, `group`, `arrange` |
+| `infinite_canvas_catalog` | Public models/channels, saved workflows, personal/system skills and system skill files |
+| `infinite_canvas_media` | `submit`, read-only `status`, `sync` result into a node, `stop` a backend task |
 
-The Key is sent only in the `Authorization` header. Remote deployments require HTTPS; localhost HTTP is allowed for testing. Authenticated API requests do not follow redirects. Changing the deployment URL makes the previously saved Key unavailable until a Key is verified for the new URL. Old browser session tokens are not reused.
+Every node/media call names a `canvasId`. Reads return `project.revision`; node edits, project rename/delete and media submit/sync require a fresh `expectedRevision`. Writes preserve unrelated project fields and read back the result. Writes from this plugin are serialized per canvas, and known stale revisions are rejected. **The current backend has no atomic compare-and-swap**, so simultaneous browser/API editing can still race; do not treat these checks as collaborative real-time synchronization.
 
-The Key stays out of state responses, model tool output and logs. A `401` indicates an invalid, expired or revoked Key; `403` indicates missing permissions or exhausted request quota; `429` means wait before retrying. Generation may consume the account's credits and should only run when requested.
+Node deletion cleans graph edges, group/batch membership and stale chat media references, but retains actual files, backend tasks and generation history. Grouping does not support nested groups or batch nodes; individual batch movement and batch layout remain web-app functions. There is no API equivalent of a mouse selection, unsaved browser state, local Codex session or private browser model configuration.
 
-If you change the local Agent port, also set `env.CANVAS_AGENT_PORT` on the `infinite-canvas-mcp` row in your Harness profile overrides, then restart Harness. Both sides must use the same port. An isolated port is useful when other canvas sessions already use `3210`.
+## Backend media tasks
 
-```yaml
-- id: infinite-canvas
-  config:
-    agentUrl: http://127.0.0.1:3211
-- id: infinite-canvas-mcp
-  config:
-    serverName: infinite-canvas
-    transport: stdio
-    command: npx
-    args: ['-y', '@tigerowo/canvas-agent@latest', 'mcp']
-    failOnStartupError: false
-    env:
-      CANVAS_AGENT_PORT: "3211"
-```
+Prepare an image, video or audio node with `create_media`; this never starts generation. `submit` needs an explicit backend `channelId` and a `request` JSON object containing `model` and the provider's required parameters. The Key is never placed in that object. Image-edit JSON requests can use `edit: true` with explicitly supplied references.
 
-The UI setting takes precedence over the row default; update it to the same address in Advanced settings.
+`status` only reads the task; `sync` writes its current status and primary result URL/media metadata into the node. Additional result URLs remain in the task response; sync does not recreate the web app's batch-result UI. Workflows can be discovered, but workflow execution, multipart uploads, browser-local providers and arbitrary model-specific parameter translation are not implemented by this tool.
 
-## Limits
+Generation requires the user's authorization and can consume credits. Submission IDs are saved before sending the request; submitted nodes cannot be submitted again. On an uncertain timeout, query the retained task ID rather than retrying. Stop requests are not deletion or guaranteed refunds. Permissions, provider payloads and availability still apply even when the canvas itself is editable.
 
-- Canvas API integration targets the API Key support in [TNTest/infinite-canvas](https://github.com/TNTest/infinite-canvas), using its `{ code, data, msg }` response format.
-- Listing and creation work through the backend; live node tools still require the browser and local Agent. Multiple connected tabs can prevent the Agent from resolving its target.
-- Canvas selection is not saved in plugin settings. The connected browser tab determines the current editing context.
-- The plugin stops its managed Agent when unloaded. Force-quitting Harness may leave an Agent process running; the next start detects an existing service.
+## Credentials and local files
+
+- UI settings: `$DSH_HOME/infinite-canvas/settings.json`.
+- API Key: `$DSH_HOME/infinite-canvas/canvas-api.json`, mode `0600`, bound to its verified deployment URL. `CANVAS_API_KEY` can override it for the deployment in the plugin row configuration.
+- Optional web-Agent token: `~/.infinite-canvas/codex-agent.json`; redacted launcher log: `$DSH_HOME/infinite-canvas/agent.log`.
+
+The Key is sent only in the `Authorization` header, never in links or tool output. Remote deployments require HTTPS; localhost HTTP is allowed for testing. Authenticated requests do not follow redirects. Changing the deployment makes its old saved Key unavailable until a Key is verified for the new URL.
 
 ## Verification
 
 ```bash
+node test/canvas.test.mjs
 node test/host.test.mjs
 node test/client.test.mjs
 npm pack --dry-run --ignore-scripts
 ```
 
-Host tests cover API Key validation and deployment binding, permissions and rate-limit errors, same-origin guards, project operations, skill registration and Agent supervision. Client tests render the settings page and exercise configuration and single-tab handoff behaviour. They use test credentials and local fake services.
+Tests cover graph edits and preservation, revision conflicts, group movement, media submission/recovery/sync with fake tasks, HTTP credential isolation, backend edits with the web Agent stopped, optional Agent start/stop and settings rendering without automatic browser navigation. Real paid generation needs separate authorized acceptance for the selected model/channel.

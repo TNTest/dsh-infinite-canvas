@@ -1,30 +1,6 @@
-/**
- * Host half of the Infinite Canvas bundle.
- *
- * Owns four things and nothing else:
- *  1. The canvas settings a person edits in the Harness UI (a small JSON file
- *     under DSH_HOME, so a save takes effect without reloading the plugin).
- *  2. A supervisor for the local `canvas-agent` service: it starts the official
- *     `npx -y @tigerowo/canvas-agent` child, waits for it to listen, restarts it
- *     after a crash, and stops it when the plugin unloads.
- *  3. Same-origin HTTP routes the Web panel and the Settings page call.
- *  4. Model-facing status/project tools and a bundled operation skill.
- *
- * The canvas itself is a third-party Web application and is never embedded:
- * a cross-site iframe cannot carry that site's login session, so the embedded
- * canvas would never start and never reach the local agent. The panel therefore
- * only *opens* the canvas in a real browser tab, with the agent URL and token in
- * the address hash — the same handshake `canvas-agent open` performs. The token
- * is returned only to the configured canvas: `POST /token` and `POST /link` answer a same-origin
- * request only.
- *
- * No canvas id has to be pinned: an empty id opens the deployment's canvas list,
- * and whichever canvas the person opens registers itself with the agent, so the
- * canvas id becomes the agent's context rather than a stored setting.
- *
- * @module dsh-infinite-canvas
- */
+/** Backend API tools and an independent, optional launcher for the web app's local Agent. */
 import { randomBytes } from 'node:crypto'
+import { createCanvasOperations, revisionOf } from './canvas-operations.js'
 import { spawn } from 'node:child_process'
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -41,9 +17,6 @@ const DEFAULT_AGENT_URL = 'http://127.0.0.1:3210'
 /** Default deployment of the API Key-enabled TNTest fork. */
 const DEFAULT_CANVAS_BASE_URL = 'https://infic.transiglobal.com'
 
-/** MCP server namespace declared by this bundle's patch row. */
-const MCP_SERVER_NAME = 'infinite-canvas'
-
 /** Settings file shape version; a different version is ignored rather than guessed at. */
 const SETTINGS_VERSION = 1
 
@@ -54,7 +27,6 @@ const CANVAS_API_PREFIX = '/api/v1'
 const CANVAS_API_TIMEOUT_MS = 12_000
 
 const PROBE_TIMEOUT_MS = 2500
-const TOOLS_TIMEOUT_MS = 4000
 /** Refuse absurd request bodies before buffering them. */
 const MAX_BODY_BYTES = 64 * 1024
 /** First start may have to download the package, so the wait is generous. */
@@ -127,11 +99,14 @@ async function canvasApi(config, request) {
   const key = request.key ?? resolveCanvasApiKey(config).key
   if (!validApiKey(key)) throw new Error('请在「无限画布」设置中配置 ic_ 开头的用户 API Key')
   const baseUrl = request.baseUrl ?? resolveSettings(config).canvasBaseUrl
-  const target = new URL(`${baseUrl}${CANVAS_API_PREFIX}${request.path}`)
+  const target = new URL(`${baseUrl}${request.public ? '/api' : CANVAS_API_PREFIX}${request.path}`)
   if (target.protocol !== 'https:' && !['127.0.0.1', 'localhost', '[::1]'].includes(target.hostname)) {
     throw new Error('API Key 需要 HTTPS 站点地址（本机测试除外）')
   }
-  const headers = { authorization: `Bearer ${key}` }
+  const headers = request.public ? {} : { authorization: `Bearer ${key}` }
+  if (request.channelId) headers['X-Model-Channel-ID'] = request.channelId
+  if (request.clientTaskId) headers['X-Client-Video-Task-ID'] = request.clientTaskId
+  if (request.sourceId) { headers['X-Video-Task-Source'] = 'canvas'; headers['X-Video-Task-Source-ID'] = request.sourceId }
   if (request.body !== undefined) headers['content-type'] = 'application/json'
   let response
   try {
@@ -146,7 +121,7 @@ async function canvasApi(config, request) {
     throw new Error('画布站不可达，请检查站点地址与网络；认证请求不允许重定向')
   }
   if (response.status === 401) throw new Error('API Key 无效、已过期或已撤销，请更换 Key')
-  if (response.status === 403) throw new Error('API Key 权限不足或请求额度耗尽；读取需 read，新建需 read + write')
+  if (response.status === 403) throw new Error('API Key 权限不足或请求额度耗尽；读取需 read，保存需 read + write，生成需 generate，资源删除需 delete')
   if (response.status === 429) throw new Error(`API Key 请求过于频繁，请在 ${response.headers.get('retry-after') ?? '60'} 秒后重试`)
   let envelope
   try {
@@ -154,11 +129,12 @@ async function canvasApi(config, request) {
   } catch {
     throw new Error(`画布站返回异常（HTTP ${response.status}）`)
   }
-  if (!response.ok || envelope?.code !== 0) {
-    const message = typeof envelope?.msg === 'string' ? envelope.msg.replaceAll(key, '<key>') : ''
+  if (!response.ok || envelope?.code !== undefined && envelope.code !== 0 || !request.raw && envelope?.code !== 0 || request.raw && envelope?.error && typeof envelope.status !== 'string') {
+    const detail = envelope?.msg ?? envelope?.error?.message
+    const message = typeof detail === 'string' ? detail.replaceAll(key, '<key>') : ''
     throw new Error(message || `画布站请求失败（HTTP ${response.status}）`)
   }
-  return envelope.data
+  return envelope.code === 0 ? envelope.data : envelope
 }
 
 /**
@@ -351,59 +327,20 @@ function snapshot(config) {
     autoStart: settings.autoStart,
     embedCredentials: settings.embedCredentials,
     tokenAvailable: token.token !== '',
-    tokenSource: token.source,
-    tokenFile: token.file,
     apiKeyAvailable: apiKey.key !== '',
     apiKeySource: apiKey.source,
-    apiKeyFile: apiKey.file,
     apiKeyRevision: readJsonFile(apiKey.file)?.savedAt ?? '',
-    settingsPath: settings.path,
-    settingsStored: settings.stored !== undefined,
-    clientId: typeof config?.clientId === 'string' ? config.clientId : '',
-    mcpServerName: MCP_SERVER_NAME,
-    defaults: { canvasBaseUrl: DEFAULT_CANVAS_BASE_URL, agentUrl: DEFAULT_AGENT_URL },
   }
 }
 
-/**
- * Ask the local agent what it knows. `GET /config` needs no credentials, so a
- * missing token still reports whether the service is up.
- */
-async function probeAgent(agentUrl, token) {
-  const base = String(agentUrl).replace(/\/+$/, '')
+/** The web launcher only checks service reachability, never the browser's tool session. */
+async function probeAgent(agentUrl) {
   try {
-    const configResponse = await fetch(`${base}/config`, { signal: AbortSignal.timeout(PROBE_TIMEOUT_MS) })
-    const configBody = await configResponse.json().catch(() => undefined)
-    if (!configResponse.ok) {
-      return { running: false, connected: false, tools: [], error: `本地 Agent 返回 HTTP ${configResponse.status}` }
-    }
-    const reported = {
-      running: true,
-      hasToken: configBody?.hasToken === true,
-      connected: false,
-      tools: [],
-      error: undefined,
-    }
-    if (token === '') return { ...reported, error: '未找到连接 Token，请先启动本地 Canvas Agent' }
-    const response = await fetch(`${base}/tools?clientId=`, {
-      headers: { 'x-canvas-agent-token': token },
-      signal: AbortSignal.timeout(TOOLS_TIMEOUT_MS),
-    })
-    const body = await response.json().catch(() => undefined)
-    if (!response.ok) {
-      return { ...reported, error: typeof body?.error === 'string' ? body.error : `HTTP ${response.status}` }
-    }
-    const tools = Array.isArray(body) ? body : []
-    return {
-      ...reported,
-      connected: true,
-      tools: tools.map((tool) => tool?.name).filter((toolName) => typeof toolName === 'string' && !['set_agent_state', 'read_skill_file'].includes(toolName)),
-      error: undefined,
-    }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    return { running: false, connected: false, tools: [], error: message }
-  }
+    const response = await fetch(`${String(agentUrl).replace(/\/+$/, '')}/config`, { signal: AbortSignal.timeout(PROBE_TIMEOUT_MS) })
+    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+    const body = await response.json()
+    return { running: true, hasToken: body.hasToken === true }
+  } catch (error) { return { running: false, error: error.message } }
 }
 
 /** Is something already listening at this agent URL? */
@@ -760,194 +697,83 @@ function sameOriginRequest(req, webServer) {
 
 export function apply(ctx, config) {
   const supervisor = createAgentSupervisor(config)
-  /**
-   * A canvas the panel should bring the browser tab to. Kept in memory only:
-   * nothing about "which canvas" is ever written to settings. The panel polls
-   * /state and navigates its single named tab, which is how a canvas created
-   * here reaches the person without opening a second tab.
-   */
-  let pending = null
-  /** Origin of the Harness page, so chat links can redirect instead of leaking a token. */
-  let pageOrigin = ''
+  const backend = createCanvasOperations((request) => canvasApi(config, request))
+  ctx.effect(() => () => void supervisor.dispose(), 'dsh-infinite-canvas: web agent supervisor')
+  ctx.effect(() => {
+    supervisor.startWatchdog()
+    if (!resolveSettings(config).autoStart) return () => {}
+    const timer = setTimeout(() => void supervisor.start(), 1500)
+    return () => clearTimeout(timer)
+  }, 'dsh-infinite-canvas: optional web agent autostart')
 
-  ctx.effect(() => () => void supervisor.dispose(), 'dsh-infinite-canvas: agent supervisor')
-
-  ctx.effect(
-    () => {
-      supervisor.startWatchdog()
-      if (!resolveSettings(config).autoStart) return () => undefined
-      const timer = setTimeout(() => {
-        void supervisor.start()
-      }, 1500)
-      return () => clearTimeout(timer)
-    },
-    'dsh-infinite-canvas: agent autostart',
-  )
-
-  ctx.inject(['webServer'], (webCtx) => {
-    const webServer = webCtx.webServer
+  const connection = async () => {
     try {
-      pageOrigin = webServer.getOrigin()
-    } catch {
-      pageOrigin = ''
-    }
-
-    const agentView = async () => {
-      const settings = resolveSettings(config)
-      const token = resolveToken(config)
-      const probe = await probeAgent(settings.agentUrl, token.token)
-      const supervision = supervisor.state()
-      return { ...probe, ...supervision, error: supervision.error ?? probe.error, probeError: probe.error }
-    }
-
+      const projects = await canvasApi(config, { method: 'GET', path: '/canvas/projects' })
+      return { connected: true, projectCount: projects.length }
+    } catch (error) { return { connected: false, error: error.message } }
+  }
+  ctx.inject(['webServer'], (webCtx) => {
+    const server = webCtx.webServer
     const handler = async (req, res) => {
-      const requestUrl = new URL(typeof req.url === 'string' ? req.url : '/', 'http://localhost')
-      const path = requestUrl.pathname.replace(/\/+$/, '') || '/'
-      const method = typeof req.method === 'string' ? req.method.toUpperCase() : 'GET'
-
+      const url = new URL(req.url ?? '/', 'http://localhost')
+      const path = url.pathname.replace(/\/+$/, '')
+      const method = req.method?.toUpperCase() ?? 'GET'
       try {
-        if (path === `${ROUTE_PREFIX}/state` && method === 'GET') {
-          return sendJson(res, 200, { ...snapshot(config), pending })
-        }
-
-        if (path === `${ROUTE_PREFIX}/target` && method === 'POST') {
-          if (!sameOriginRequest(req, webServer)) return sendJson(res, 403, { error: 'cross-origin request rejected' })
-          const body = await readJsonBody(req)
-          const canvasId = body.canvasId === undefined ? '' : normalizeCanvasId(body.canvasId)
-          if (canvasId === undefined) return sendJson(res, 400, { error: '画布 ID 无效' })
-          if (canvasId === '') {
-            pending = null
-            return sendJson(res, 200, { pending })
-          }
-          pending = {
-            canvasId,
-            title: typeof body.title === 'string' ? body.title : '',
-            blocked: body.blocked === true,
-            at: Date.now(),
-          }
-          return sendJson(res, 200, { pending })
-        }
-
-        if (path === `${ROUTE_PREFIX}/agent` && method === 'GET') {
-          return sendJson(res, 200, await agentView())
-        }
-
+        if (!sameOriginRequest(req, server)) return sendJson(res, 403, { error: 'cross-origin request rejected' })
+        if (path === `${ROUTE_PREFIX}/state` && method === 'GET') return sendJson(res, 200, snapshot(config))
+        if (path === `${ROUTE_PREFIX}/connection` && method === 'GET') return sendJson(res, 200, await connection())
+        if (path === `${ROUTE_PREFIX}/agent` && method === 'GET') return sendJson(res, 200, { ...await probeAgent(resolveSettings(config).agentUrl), ...supervisor.state() })
         if (path === `${ROUTE_PREFIX}/agent/start` && method === 'POST') {
-          if (!sameOriginRequest(req, webServer)) return sendJson(res, 403, { error: 'cross-origin request rejected' })
           await Promise.race([supervisor.start(), delay(700)])
-          return sendJson(res, 200, await agentView())
+          return sendJson(res, 200, { ...await probeAgent(resolveSettings(config).agentUrl), ...supervisor.state() })
         }
-
         if (path === `${ROUTE_PREFIX}/agent/stop` && method === 'POST') {
-          if (!sameOriginRequest(req, webServer)) return sendJson(res, 403, { error: 'cross-origin request rejected' })
           await supervisor.stop('manual')
-          return sendJson(res, 200, await agentView())
+          return sendJson(res, 200, { running: false, connected: false, tools: [], ...supervisor.state() })
         }
-
-        if (path === `${ROUTE_PREFIX}/token` && method === 'POST') {
-          if (!sameOriginRequest(req, webServer)) return sendJson(res, 403, { error: 'cross-origin request rejected' })
-          const token = resolveToken(config)
-          if (token.token === '') return sendJson(res, 404, { error: 'no connect token available' })
-          const settings = resolveSettings(config)
-          return sendJson(res, 200, { token: token.token, agentUrl: settings.agentUrl, source: token.source })
-        }
-
         if (path === `${ROUTE_PREFIX}/link` && method === 'POST') {
-          if (!sameOriginRequest(req, webServer)) return sendJson(res, 403, { error: 'cross-origin request rejected' })
-          const body = await readJsonBody(req).catch(() => ({}))
-          const requested = body.canvasId === undefined ? '' : normalizeCanvasId(body.canvasId)
-          if (requested === undefined) return sendJson(res, 400, { error: '画布 ID 无效' })
-          const settings = resolveSettings(config)
-          const token = resolveToken(config)
-          const link = connectLinkOf(settings, token.token, requested)
-          return sendJson(res, 200, {
-            url: link.url,
-            embedded: link.embedded,
-            canvasUrl: canvasPageUrl(settings, requested),
-            canvasId: requested,
-            agentUrl: settings.agentUrl,
-          })
-        }
-
-        if (path === `${ROUTE_PREFIX}/canvas-key` && method === 'POST') {
-          if (!sameOriginRequest(req, webServer)) return sendJson(res, 403, { error: 'cross-origin request rejected' })
           const body = await readJsonBody(req)
-          if (typeof body.key !== 'string') return sendJson(res, 400, { error: 'key 必须是字符串' })
+          const canvasId = normalizeCanvasId(body.canvasId ?? '')
+          if (canvasId === undefined) throw new Error('画布 ID 无效')
+          const settings = resolveSettings(config)
+          // Viewing is plain navigation. Only an explicit web-Agent action adds its handshake.
+          const link = body.webAgent === true ? connectLinkOf(settings, resolveToken(config).token, canvasId) : { url: canvasPageUrl(settings, canvasId), embedded: false }
+          return sendJson(res, 200, link)
+        }
+        if (path === `${ROUTE_PREFIX}/canvas-key` && method === 'POST') {
+          const body = await readJsonBody(req)
+          if (typeof body.key !== 'string') throw new Error('key 必须是字符串')
           const key = normalizeApiKey(body.key)
           const baseUrl = body.canvasBaseUrl === undefined ? resolveSettings(config).canvasBaseUrl : normalizeBaseUrl(body.canvasBaseUrl)
-          if (baseUrl === undefined) return sendJson(res, 400, { error: '画布站地址无效' })
-          if (key !== '') await canvasApi(config, { method: 'GET', path: '/canvas/projects', key, baseUrl })
+          if (!baseUrl) throw new Error('画布站地址无效')
+          if (key) await canvasApi(config, { method: 'GET', path: '/canvas/projects', key, baseUrl })
           writeJsonFile(canvasApiFile(config), { key, baseUrl, savedAt: new Date().toISOString() })
-          if (key !== '' && body.canvasBaseUrl !== undefined) {
+          if (key && body.canvasBaseUrl !== undefined) {
             const { path: file, usable } = settingsFromFile(config)
             writeJsonFile(file, { ...usable, version: SETTINGS_VERSION, canvasBaseUrl: baseUrl })
           }
           return sendJson(res, 200, snapshot(config))
         }
-
-        if (path === `${ROUTE_PREFIX}/open` && method === 'GET') {
-          const requested = normalizeCanvasId(requestUrl.searchParams.get('canvas') ?? '')
-          if (requested === undefined) return sendJson(res, 400, { error: '画布 ID 无效' })
-          const settings = resolveSettings(config)
-          const token = resolveToken(config)
-          const target = connectLinkOf(settings, token.token, requested).url
-          if (pending?.canvasId === requested) pending = null
-          res.writeHead(302, { location: target, 'cache-control': 'no-store' })
-          return res.end()
-        }
-
         if (path === `${ROUTE_PREFIX}/projects` && method === 'GET') {
-          if (!sameOriginRequest(req, webServer)) return sendJson(res, 403, { error: 'cross-origin request rejected' })
-          const raw = await canvasApi(config, { method: 'GET', path: '/canvas/projects' })
-          const list = Array.isArray(raw) ? raw : []
-          const projects = list.map(summarizeProject).filter((item) => item !== undefined)
-          return sendJson(res, 200, { projects })
+          const projects = await canvasApi(config, { method: 'GET', path: '/canvas/projects' })
+          return sendJson(res, 200, { projects: projects.map(summarizeProject).filter(Boolean) })
         }
-
         if (path === `${ROUTE_PREFIX}/projects` && method === 'POST') {
-          if (!sameOriginRequest(req, webServer)) return sendJson(res, 403, { error: 'cross-origin request rejected' })
           const body = await readJsonBody(req)
-          const title =
-            typeof body.title === 'string' && body.title.trim() !== '' ? body.title.trim().slice(0, 80) : NEW_CANVAS_TITLE
-          const project = newCanvasProject(title)
-          await canvasApi(config, { method: 'POST', path: '/canvas/projects', body: { data: project } })
-          const settings = resolveSettings(config)
-          pending = { canvasId: project.id, title: project.title, at: Date.now() }
-          return sendJson(res, 200, {
-            project: summarizeProject(project),
-            canvasUrl: canvasPageUrl(settings, project.id),
-            pending,
-          })
+          const project = newCanvasProject(body.title?.trim().slice(0, 80) || NEW_CANVAS_TITLE)
+          const saved = await canvasApi(config, { method: 'POST', path: '/canvas/projects', body: { data: project } })
+          return sendJson(res, 200, { project: backend.summary(saved), canvasUrl: canvasPageUrl(resolveSettings(config), saved.id) })
         }
-
         if (path === `${ROUTE_PREFIX}/settings` && method === 'POST') {
-          if (!sameOriginRequest(req, webServer)) return sendJson(res, 403, { error: 'cross-origin request rejected' })
           const body = await readJsonBody(req)
-          const { path: file, stored } = settingsFromFile(config)
-          const next = {
-            version: SETTINGS_VERSION,
-            canvasBaseUrl: undefined,
-            agentUrl: undefined,
-            embedCredentials: undefined,
-            autoStart: undefined,
-          }
-          for (const key of ['canvasBaseUrl', 'agentUrl', 'embedCredentials', 'autoStart']) {
-            if (stored?.[key] !== undefined) next[key] = stored[key]
-          }
-          if (body.canvasBaseUrl !== undefined) {
-            const normalized = normalizeBaseUrl(body.canvasBaseUrl)
-            if (normalized === undefined) return sendJson(res, 400, { error: 'canvasBaseUrl 不是有效的 http(s) 地址' })
-            next.canvasBaseUrl = normalized
-          }
-          if (body.agentUrl !== undefined) {
-            const normalized = normalizeBaseUrl(body.agentUrl)
-            if (normalized === undefined) return sendJson(res, 400, { error: 'agentUrl 不是有效的 http(s) 地址' })
-            next.agentUrl = normalized
-          }
-          if (body.embedCredentials !== undefined) next.embedCredentials = body.embedCredentials !== false
-          if (body.autoStart !== undefined) next.autoStart = body.autoStart !== false
-          for (const key of Object.keys(next)) if (next[key] === undefined) delete next[key]
           const previous = resolveSettings(config)
+          const { path: file, usable } = settingsFromFile(config)
+          const next = { version: SETTINGS_VERSION, canvasBaseUrl: usable?.canvasBaseUrl, agentUrl: usable?.agentUrl, autoStart: usable?.autoStart, embedCredentials: usable?.embedCredentials }
+          for (const field of ['canvasBaseUrl', 'agentUrl']) if (body[field] !== undefined) {
+            next[field] = normalizeBaseUrl(body[field])
+            if (!next[field]) throw new Error(`${field} 不是有效的 http(s) 地址`)
+          }
+          for (const field of ['autoStart', 'embedCredentials']) if (body[field] !== undefined) next[field] = body[field] !== false
           writeJsonFile(file, next)
           if (body.agentUrl !== undefined && previous.agentUrl !== next.agentUrl) {
             await supervisor.stop('configuration')
@@ -955,247 +781,65 @@ export function apply(ctx, config) {
           } else if (body.autoStart === true) void supervisor.start()
           return sendJson(res, 200, snapshot(config))
         }
-
         return sendJson(res, 404, { error: `unknown route ${method} ${path}` })
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
-        return sendJson(res, 400, { error: message })
-      }
+      } catch (error) { return sendJson(res, 400, { error: error.message }) }
     }
-
-    webCtx.effect(
-      () => webServer.register({ kind: 'prefix', path: ROUTE_PREFIX, handler }),
-      'dsh-infinite-canvas: routes',
-    )
+    webCtx.effect(() => server.register({ kind: 'prefix', path: ROUTE_PREFIX, handler }), 'dsh-infinite-canvas: routes')
   })
-
   ctx.inject(['skills'], (skillCtx) => {
     skillCtx.effect(() => skillCtx.skills.register({
       name: 'infinite-canvas',
-      description: 'Use Infinite Canvas in Harness: list, create or select a canvas with the configured API Key, then edit its live nodes using the canvas MCP tools. Handles connection and browser handoff.',
+      description: 'Operate saved Infinite Canvas projects, nodes, connections, layout and backend media tasks directly with API Key. No browser or local Agent required. The optional launcher is only for the web app’s local Agent.',
       source: 'runtime',
       content: readFileSync(new URL('./skills/infinite-canvas/SKILL.md', import.meta.url), 'utf8').replace(/^---[\s\S]*?---\s*/, ''),
     }), 'dsh-infinite-canvas: operation skill')
   })
-
   ctx.inject(['tools'], (toolCtx) => {
-    toolCtx.effect(
-      () =>
-        toolCtx.tools.register({
-          name: 'infinite_canvas_status',
-          description:
-            'Report the Infinite Canvas setup for this Harness: the canvas URL, whether the local canvas-agent service is running or can be started, whether a canvas tab is currently connected, which canvas tools it exposes as mcp__infinite-canvas__<tool>, and whether a canvas the Host asked for is still waiting for the browser (pendingBlocked + openLink). Use it before driving the canvas, after creating a canvas, and to explain what to fix when those MCP tools are missing.',
-          parameters: { type: 'object', properties: {}, additionalProperties: false },
-          output: {
-            schema: {
-              type: 'object',
-              properties: {
-                canvasUrl: {
-                  type: 'string',
-                  description: 'The deployment canvas list the panel opens; no canvas id is stored anywhere.',
-                },
-                canvasListUrl: { type: 'string', description: 'Same value as canvasUrl, named for what it is.' },
-                canvasBaseUrl: { type: 'string', description: 'Canvas deployment base URL.' },
-                agentUrl: { type: 'string', description: 'Local canvas-agent service URL.' },
-                agentRunning: { type: 'boolean', description: 'Whether the local canvas-agent service answered.' },
-                phase: { type: 'string', description: 'Supervisor phase: idle, starting, running, external, stopping, stopped, exited or error.' },
-                autoStart: { type: 'boolean', description: 'Whether the plugin keeps the local agent running for the user.' },
-                connected: { type: 'boolean', description: 'Whether a canvas tab is connected to the agent.' },
-                tokenAvailable: { type: 'boolean', description: 'Whether a connect token was found on this machine.' },
-                canvasApiKeyAvailable: {
-                  type: 'boolean',
-                  description: 'Whether a dedicated user API Key is configured for infinite_canvas_projects (read to list, read + write to create).',
-                },
-                pendingCanvasId: {
-                  type: 'string',
-                  description: 'Canvas id the browser was asked to show, or an empty string when nothing is pending.',
-                },
-                pendingCanvasTitle: { type: 'string', description: 'Title of that pending canvas, when known.' },
-                pendingBlocked: {
-                  type: 'boolean',
-                  description:
-                    'True when the browser refused the automatic tab switch, so the person has to open the link once.',
-                },
-                openLink: {
-                  type: 'string',
-                  description:
-                    'Same-origin link that redirects to the credentialed canvas page; safe to hand to the user because the token only appears in the redirect target, not in this URL. Empty when the Harness origin is unknown.',
-                },
-                tools: { type: 'array', items: { type: 'string' }, description: 'Tool names the connected canvas exposes.' },
-                mcpServerName: { type: 'string', description: 'MCP server namespace, for mcp__<namespace>__<tool> names.' },
-                settingsPath: { type: 'string', description: 'Where the UI settings file lives.' },
-                hint: { type: 'string', description: 'What to do next when something is missing.' },
-              },
-              required: [
-                'canvasUrl',
-                'canvasListUrl',
-                'canvasBaseUrl',
-                'agentUrl',
-                'agentRunning',
-                'phase',
-                'autoStart',
-                'connected',
-                'tokenAvailable',
-                'canvasApiKeyAvailable',
-                'pendingCanvasId',
-                'pendingCanvasTitle',
-                'pendingBlocked',
-                'openLink',
-                'tools',
-                'mcpServerName',
-                'settingsPath',
-                'hint',
-              ],
-              additionalProperties: false,
-            },
-            render(_args, value) {
-              return [{ type: 'text', text: JSON.stringify(value, null, 2) }]
-            },
-          },
-          async execute() {
-            const state = snapshot(config)
-            const probe = await probeAgent(state.agentUrl, resolveToken(config).token)
-            const supervision = supervisor.state()
-            const pendingId = pending === null ? '' : pending.canvasId
-            const openLink =
-              pageOrigin === ''
-                ? ''
-                : `${pageOrigin}${ROUTE_PREFIX}/open${pendingId === '' ? '' : `?canvas=${encodeURIComponent(pendingId)}`}`
-            const blocked = pending !== null && pending.blocked === true
-            const hint = !state.tokenAvailable
-              ? '连接凭证尚未生成：本地 Agent 启动后会写入 ~/.infinite-canvas/codex-agent.json；面板上的「启动 Agent」可代劳。'
-              : !probe.running
-                ? `本地 Canvas Agent 未运行。面板上的「启动 Agent」会自动拉起 npx -y @tigerowo/canvas-agent@latest（默认监听 ${state.agentUrl}）。`
-                : !probe.connected
-                  ? '本地 Agent 已运行，但还没有画布连接：在「无限画布」面板点「打开画布」，用浏览器打开带凭证的列表页并选一张画布；也可以用 infinite_canvas_projects 的 create 新建，面板会把同一个标签页切过去。'
-                  : '画布已连接，先用 get_canvas_summary 核对目标 ID，再调用 mcp__infinite-canvas__* 工具；当前画布 id 用 get_canvas_summary 读取，它由所连接的画布页决定，没有任何设置记录它。'
-            const finalHint = blocked
-              ? `浏览器拦下了自动打开：把 openLink 原样发给用户，用户点一下就会跳到带凭证的画布页（${openLink}）。`
-              : hint
-            return {
-              canvasUrl: state.canvasUrl,
-              canvasListUrl: state.canvasListUrl,
-              canvasBaseUrl: state.canvasBaseUrl,
-              agentUrl: state.agentUrl,
-              agentRunning: probe.running === true,
-              phase: supervision.phase,
-              autoStart: state.autoStart,
-              connected: probe.connected === true,
-              tokenAvailable: state.tokenAvailable,
-              canvasApiKeyAvailable: state.apiKeyAvailable,
-              tools: probe.tools,
-              mcpServerName: state.mcpServerName,
-              settingsPath: state.settingsPath,
-              pendingCanvasId: pendingId,
-              pendingCanvasTitle: pending === null ? '' : pending.title,
-              pendingBlocked: blocked,
-              openLink,
-              hint: finalHint,
-            }
-          },
-          presentCall: () => ({ card: 'generic', title: 'Infinite Canvas status', kind: 'read' }),
-        }),
-      'dsh-infinite-canvas: status tool',
-    )
-
-    /**
-     * The canvas-agent MCP tool set has no canvas-management tools, so the
-     * deployment API is used here: list what exists, or create a canvas when the
-     * person asked for a new one. A created canvas is handed to the panel as the
-     * pending target, and the panel navigates its single browser tab to it — no
-     * second tab, and nothing about the canvas is stored.
-     */
-    toolCtx.effect(
-      () =>
-        toolCtx.tools.register({
-          name: 'infinite_canvas_projects',
-          description:
-            'Use the configured user API Key to list (read), create (read + write), or open an existing canvas by id. Never ask for a browser session token. Read the infinite-canvas skill before multi-step editing. The canvas id is never stored: whichever canvas the browser tab shows is the agent context (read it with get_canvas_summary). Create only when the user asked for a new canvas. After creating, call infinite_canvas_status: if pendingBlocked is true (the browser refused the automatic tab switch because no canvas tab was open yet), paste its openLink to the user so one click opens the credentialed canvas page.',
-          parameters: {
-            type: 'object',
-            properties: {
-              action: { type: 'string', enum: ['list', 'create', 'open'], description: 'list canvases, create a new empty one, or open an existing canvas by id.' },
-              title: { type: 'string', description: 'Title for a new canvas; defaults to 未命名画布.' },
-              canvasId: { type: 'string', description: 'Existing canvas id from list; required for open.' },
-            },
-            required: ['action'],
-            additionalProperties: false,
-          },
-          output: {
-            schema: {
-              type: 'object',
-              properties: {
-                ok: { type: 'boolean', description: 'Whether the deployment API call succeeded.' },
-                projects: {
-                  type: 'array',
-                  description: 'Saved canvases, as the deployment returns them.',
-                  items: {
-                    type: 'object',
-                    properties: {
-                      id: { type: 'string' },
-                      title: { type: 'string' },
-                      updatedAt: { type: 'string' },
-                      nodeCount: { type: 'number' },
-                    },
-                    required: ['id', 'title', 'updatedAt', 'nodeCount'],
-                    additionalProperties: false,
-                  },
-                },
-                created: {
-                  type: 'object',
-                  description: 'The canvas just created, when action was create.',
-                  properties: {
-                    id: { type: 'string' },
-                    title: { type: 'string' },
-                    canvasUrl: { type: 'string' },
-                  },
-                  required: ['id', 'title', 'canvasUrl'],
-                  additionalProperties: false,
-                },
-                error: { type: 'string', description: 'Why the call failed, when ok is false.' },
-              },
-              required: ['ok', 'projects'],
-              additionalProperties: false,
-            },
-            render(_args, value) {
-              return [{ type: 'text', text: JSON.stringify(value, null, 2) }]
-            },
-          },
-          async execute(args) {
-            const action = args?.action ?? 'list'
-            try {
-              if (action === 'create') {
-                const rawTitle = args !== null && typeof args === 'object' ? args.title : undefined
-                const title = typeof rawTitle === 'string' && rawTitle.trim() !== '' ? rawTitle.trim().slice(0, 80) : NEW_CANVAS_TITLE
-                const project = newCanvasProject(title)
-                await canvasApi(config, { method: 'POST', path: '/canvas/projects', body: { data: project } })
-                const summary = summarizeProject(project)
-                pending = { canvasId: summary.id, title: summary.title, at: Date.now() }
-                return {
-                  ok: true,
-                  projects: [],
-                  created: {
-                    id: summary.id,
-                    title: summary.title,
-                    canvasUrl: canvasPageUrl(resolveSettings(config), summary.id),
-                  },
-                }
-              }
-              const raw = await canvasApi(config, { method: 'GET', path: '/canvas/projects' })
-              const projects = (Array.isArray(raw) ? raw : []).map(summarizeProject).filter((item) => item !== undefined)
-              if (action === 'open') {
-                const project = projects.find((item) => item.id === args.canvasId)
-                if (!project) throw new Error('画布不存在，请先列出画布并核对 ID')
-                pending = { canvasId: project.id, title: project.title, at: Date.now() }
-              } else if (action !== 'list') throw new Error('不支持的画布操作')
-              return { ok: true, projects }
-            } catch (error) {
-              return { ok: false, projects: [], error: error instanceof Error ? error.message : String(error) }
-            }
-          },
-          presentCall: () => ({ card: 'generic', title: 'Infinite Canvas projects', kind: 'read' }),
-        }),
-      'dsh-infinite-canvas: projects tool',
-    )
+    const register = (name, description, properties, required, execute) => toolCtx.effect(() => toolCtx.tools.register({
+      name, description,
+      parameters: { type: 'object', properties, required, additionalProperties: false },
+      output: { schema: { type: 'object', additionalProperties: true }, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value, null, 2) }] },
+      execute: async (args) => { try { return JSON.parse(JSON.stringify(await execute(args))) } catch (error) { return { ok: false, error: error.message } } },
+      presentCall: () => ({ card: 'generic', title: name.replaceAll('_', ' ') }),
+    }), `dsh-infinite-canvas: ${name}`)
+    const string = { type: 'string' }, strings = { type: 'array', items: string }
+    register('infinite_canvas_status', 'Check backend API connectivity separately from the optional web-Agent launcher. Backend tools work while the browser is closed and the local Agent is stopped.', {}, [], async () => ({
+      ok: true, backend: await connection(), canvasBaseUrl: resolveSettings(config).canvasBaseUrl, apiKeyConfigured: snapshot(config).apiKeyAvailable,
+      webAgent: { optional: true, ...supervisor.state(), url: resolveSettings(config).agentUrl },
+      hint: 'Use explicit canvasId and revision from backend reads. Do not open a browser or start an Agent to fix API errors.',
+    }))
+    register('infinite_canvas_projects', 'List, create, rename or delete saved backend canvases. No browser navigation. Read the infinite-canvas skill. open only returns an optional viewing URL. Deleting a canvas needs delete scope and explicit user intent.', {
+      action: { type: 'string', enum: ['list', 'create', 'rename', 'delete', 'open'] }, canvasId: string, title: string, expectedRevision: string,
+    }, ['action'], async (args) => {
+      if (args.action === 'rename') return backend.rename(args)
+      if (args.action === 'list') {
+        const projects = await canvasApi(config, { method: 'GET', path: '/canvas/projects' })
+        return { ok: true, projects: projects.map((p) => ({ ...backend.summary(p), canvasUrl: canvasPageUrl(resolveSettings(config), p.id) })) }
+      }
+      if (args.action === 'create') {
+        const p = newCanvasProject(args.title?.trim().slice(0, 80) || NEW_CANVAS_TITLE)
+        const saved = await canvasApi(config, { method: 'POST', path: '/canvas/projects', body: { data: p } })
+        const verified = await backend.read(p.id)
+        if (revisionOf(saved) !== revisionOf(verified)) throw new Error('新建后的回读不一致，请先读取核对，不要重复创建')
+        return { ok: true, created: { ...backend.summary(verified), canvasUrl: canvasPageUrl(resolveSettings(config), p.id) } }
+      }
+      const p = await backend.read(args.canvasId)
+      if (args.action === 'open') return { ok: true, canvasUrl: canvasPageUrl(resolveSettings(config), p.id), browserRequired: false }
+      if (args.action === 'delete') return backend.remove(args)
+      throw new Error('不支持的画布操作')
+    })
+    register('infinite_canvas_nodes', 'Read and edit saved canvas nodes, connections, groups and layout via backend API. All writes require expectedRevision from a fresh read. There is no browser selection or implicit current canvas. Delete removes graph references but retains media files and backend tasks. Concurrent browser edits are not atomically protected by the current server.', {
+      action: { type: 'string', enum: ['summary', 'query', 'get', 'upstream', 'downstream', 'connected', 'create_text', 'create_primary_script', 'create_media', 'update_text', 'rename', 'move', 'delete', 'connect', 'disconnect', 'group', 'arrange'] },
+      canvasId: string, expectedRevision: string, nodeId: string, nodeIds: strings, sourceNodeIds: strings, title: string, projectTitle: string, content: string, prompt: string, keyword: string,
+      kind: { type: 'string', enum: ['text', 'image', 'video', 'audio', 'config', 'panorama', 'director', 'group'] },
+      fromNodeId: string, toNodeId: string, connectionId: string, x: { type: 'number' }, y: { type: 'number' }, offset: { type: 'integer', minimum: 0 }, limit: { type: 'integer', minimum: 1, maximum: 100 },
+    }, ['action', 'canvasId'], backend.nodes)
+    register('infinite_canvas_catalog', 'Read backend public model/channel options, saved workflows, personal/system skills or a system skill file. User model/storage credentials and local browser configuration are deliberately unavailable.', {
+      resource: { type: 'string', enum: ['models', 'workflows', 'skills', 'system_skills', 'skill_file'] }, skillId: string, path: string,
+    }, ['resource'], backend.catalog)
+    register('infinite_canvas_media', 'Explicit backend media task submission, read-only status, sync result into a prepared media node, or stop task. Submit only on user-authorized generation; request must use the backend provider JSON contract with explicit model and channelId, never provider credentials. Create a media node first. submit and sync need expectedRevision. Do not retry uncertain submissions or reuse a submitted node. Does not reproduce browser-local providers or workflows automatically.', {
+      action: { type: 'string', enum: ['submit', 'status', 'sync', 'stop'] }, canvasId: string, nodeId: string, expectedRevision: string,
+      channelId: string, edit: { type: 'boolean' }, request: { type: 'object', additionalProperties: true },
+    }, ['action', 'canvasId', 'nodeId'], backend.media)
   })
 }

@@ -111,6 +111,7 @@ function makeHarness(config) {
     call,
     tool,
     projectsTool,
+    tools,
     skills,
     async dispose() {
       for (const dispose of disposers) await dispose(undefined)
@@ -118,302 +119,102 @@ function makeHarness(config) {
   }
 }
 
+let count = 0
 const tokenFile = join(work, 'codex-agent.json')
-writeFileSync(tokenFile, JSON.stringify({ token: 'a'.repeat(64), port: 3210, url: 'http://127.0.0.1:3210' }))
-
-// ---------------------------------------------------------------------------
-// 1. Settings, guards and the offline probe (nothing is spawned here).
-// ---------------------------------------------------------------------------
-const settingsPath = join(work, 'settings.json')
-const offline = makeHarness({
-  canvasBaseUrl: 'https://infic.transiglobal.com',
-  canvasId: '',
-  agentUrl: 'http://127.0.0.1:9',
-  embedCredentials: true,
-  autoStart: false,
-  settingsPath,
-  tokenFile,
-})
-
-let res = await offline.call('GET', '/infinite-canvas/state')
-check('GET state → 200', res.status === 200)
-let state = res.json()
-check('state default base url', state.canvasBaseUrl === 'https://infic.transiglobal.com', state.canvasBaseUrl)
-check('no canvas id is stored at all', state.canvasId === undefined)
-check('falls back to the deployment canvas list', state.canvasUrl === 'https://infic.transiglobal.com/canvas', state.canvasUrl)
-check('the list url is its own field', state.canvasListUrl === 'https://infic.transiglobal.com/canvas', state.canvasListUrl)
-check('token detected from agent file', state.tokenAvailable === true, state.tokenSource)
-check('state never leaks the token', !res.body.includes('aaaaaaaa'), 'len=' + res.body.length)
-check('autoStart off is reflected', state.autoStart === false)
-
-res = await offline.call('POST', '/infinite-canvas/settings', {
-  body: { canvasId: 'https://infic.transiglobal.com/canvas/abc-123_X?foo=1' },
-  origin: 'http://127.0.0.1:62692',
-})
-check('POST settings → 200', res.status === 200, res.body.slice(0, 90))
-state = res.json()
-check('a canvas id in the payload is not persisted', state.canvasId === undefined)
-check('settings file keeps no canvas id', JSON.parse(readFileSync(settingsPath, 'utf8')).canvasId === undefined)
-check('the panel target stays the canvas list', state.canvasUrl === 'https://infic.transiglobal.com/canvas', state.canvasUrl)
-
-res = await offline.call('POST', '/infinite-canvas/settings', { body: { autoStart: false }, origin: 'http://127.0.0.1:62692' })
-check('autoStart can be turned off from the UI', res.status === 200 && res.json().autoStart === false)
-
-res = await offline.call('POST', '/infinite-canvas/settings', { body: { canvasId: 'evil' }, origin: 'https://evil.example' })
-check('cross-origin settings → 403', res.status === 403)
-res = await offline.call('POST', '/infinite-canvas/token', { origin: 'https://evil.example' })
-check('cross-origin token → 403', res.status === 403)
-res = await offline.call('POST', '/infinite-canvas/agent/start', { origin: 'https://evil.example' })
-check('cross-origin agent start → 403', res.status === 403)
-
-res = await offline.call('POST', '/infinite-canvas/token', { origin: 'http://127.0.0.1:62692' })
-check('same-origin token → 200', res.status === 200)
-check('token value is the agent token', res.json().token === 'a'.repeat(64))
-
-res = await offline.call('POST', '/infinite-canvas/link', { origin: 'http://127.0.0.1:62692' })
-check('same-origin link → 200', res.status === 200, res.body.slice(0, 90))
-const link = res.json()
-check('a plain link points at the canvas list', link.url.startsWith('https://infic.transiglobal.com/canvas#'), link.url.slice(0, 80))
-const hash = new URL(link.url).hash
-check('link carries the agent url in the hash', hash.includes('agentUrl=http') && hash.includes('agentToken='))
-check('link reports the handshake as embedded', link.embedded === true)
-check('link never appears in an unrelated origin', (await offline.call('POST', '/infinite-canvas/link', { origin: 'https://evil.example' })).status === 403)
-
-res = await offline.call('POST', '/infinite-canvas/settings', { body: { canvasBaseUrl: 'ftp://x' } })
-check('rejects non-http base url', res.status === 400)
-res = await offline.call('POST', '/infinite-canvas/link', { body: { canvasId: 'https://example.com/not-canvas' } })
-check('rejects an unrelated absolute URL as a canvas', res.status === 400)
-res = await offline.call('POST', '/infinite-canvas/link', { body: { canvasId: 'abc-123_X' } })
-check('a named canvas gets its own page', res.json().url.startsWith('https://infic.transiglobal.com/canvas/abc-123_X#'), res.json().url.slice(0, 80))
-check('naming a canvas stores nothing', JSON.parse(readFileSync(settingsPath, 'utf8')).canvasId === undefined)
-res = await offline.call('POST', '/infinite-canvas/settings', { body: { canvasBaseUrl: 'canvas.example.com ' } })
-check('accepts a bare host for the base url', res.status === 200 && res.json().canvasBaseUrl === 'https://canvas.example.com')
-check('list url is appended once', res.json().canvasListUrl === 'https://canvas.example.com/canvas', res.json().canvasListUrl)
-
-res = await offline.call('POST', '/infinite-canvas/settings', { body: { canvasBaseUrl: 'https://canvas.example.com/canvas/' } })
-check('a base that already ends in /canvas is not doubled', res.json().canvasListUrl === 'https://canvas.example.com/canvas', res.json().canvasListUrl)
-
-res = await offline.call('GET', '/infinite-canvas/agent')
-check('GET agent → 200 even when offline', res.status === 200)
-check('agent reported as not running', res.json().running === false, JSON.stringify(res.json()).slice(0, 100))
-
-res = await offline.call('GET', '/infinite-canvas/nope')
-check('unknown route → 404', res.status === 404)
-
-const offlineValue = await offline.tool.execute({}, { signal: new AbortController().signal })
-check('tool returns the canvas list url', offlineValue.canvasUrl === 'https://canvas.example.com/canvas', offlineValue.canvasUrl)
-check('tool reports offline agent', offlineValue.agentRunning === false)
-check('tool carries a phase and hint', typeof offlineValue.phase === 'string' && offlineValue.hint.length > 0, offlineValue.phase)
-const rendered = offline.tool.output.render({}, offlineValue)
-check('tool renders text content', Array.isArray(rendered) && rendered[0]?.type === 'text' && rendered[0].text.includes('canvasUrl'))
-await offline.dispose()
-
-// ---------------------------------------------------------------------------
-// 2. The supervisor: start the fake agent, wait for it, stop it again.
-// ---------------------------------------------------------------------------
-const port = 43211
-const supervised = makeHarness({
-  canvasBaseUrl: 'https://infic.transiglobal.com',
-  canvasId: 'probe-canvas',
-  agentUrl: `http://127.0.0.1:${port}`,
-  embedCredentials: true,
-  autoStart: false,
-  agentCommand: process.execPath,
-  agentArgs: [fakeAgent, String(port)],
-  settingsPath: join(work, 'settings-2.json'),
-  tokenFile,
-})
-
-res = await supervised.call('POST', '/infinite-canvas/agent/start', { origin: 'http://127.0.0.1:62692' })
-check('POST agent/start → 200', res.status === 200, res.body.slice(0, 120))
-check('start answers without blocking on the download', res.json().phase === 'starting' || res.json().phase === 'running', res.json().phase)
-
-let live
-for (let attempt = 0; attempt < 40; attempt += 1) {
-  await new Promise((resolve) => setTimeout(resolve, 250))
-  live = (await supervised.call('GET', '/infinite-canvas/agent')).json()
-  if (live.running === true && live.phase === 'running') break
-}
-check('supervisor reports the agent running', live.running === true && live.phase === 'running', live.phase)
-check('supervisor owns the child', live.managed === true && typeof live.pid === 'number', `pid=${live.pid}`)
-check('spawned agent is reachable', (await fetch(`http://127.0.0.1:${port}/config`)).ok)
-check('canvas tools read through the agent', Array.isArray(live.tools) && live.tools.includes('fake_tool'), JSON.stringify(live.tools))
-check('internal Codex tools are excluded from the advertised tools', live.tools.length === 1)
-const logText = Array.isArray(live.log) ? live.log.join('\n') : ''
-check('agent console is captured', logText.includes('Local URL'), logText.slice(0, 60).replace(/\n/g, ' | '))
-check('connect token never reaches the log', !logText.includes('f'.repeat(64)), 'redacted')
-const logFile = readFileSync(join(work, 'infinite-canvas', 'agent.log'), 'utf8')
-check('log file is redacted too', logFile.includes('Local URL') && !logFile.includes('f'.repeat(64)))
-
-res = await supervised.call('POST', '/infinite-canvas/agent/stop', { origin: 'http://127.0.0.1:62692' })
-check('POST agent/stop → 200', res.status === 200)
-const stopped = res.json()
-check('supervisor reports stopped', stopped.phase === 'stopped' && stopped.running === false, stopped.phase)
-let reachableAfterStop = true
-try {
-  reachableAfterStop = (await fetch(`http://127.0.0.1:${port}/config`)).ok
-} catch {
-  reachableAfterStop = false
-}
-check('child process really exited', reachableAfterStop === false)
-
-await supervised.dispose()
-
-// ---------------------------------------------------------------------------
-// 3. The canvas-API bridge: token check, project list, project create, links.
-// ---------------------------------------------------------------------------
+writeFileSync(tokenFile, JSON.stringify({ token: 'a'.repeat(64) }))
+let projects = [{ id: 'p1', title: 'Original', createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z', nodes: [], connections: [], untouched: 'preserve' }]
 let apiFailure = null
-const apiRequests = []
-const apiServer = createServer((req, res) => {
-  const authorized = req.headers.authorization === 'Bearer ic_good_test_key'
-  let body = ''
-  req.on('data', (chunk) => {
-    body += chunk
-  })
+const calls = []
+const server = createServer((req, res) => {
+  let raw = ''
+  req.on('data', (part) => raw += part)
   req.on('end', () => {
-    apiRequests.push({ method: req.method, url: req.url, body })
-    const send = (status, payload) => {
-      res.writeHead(status, { 'content-type': 'application/json' })
-      res.end(JSON.stringify(payload))
+    calls.push({ method: req.method, path: req.url, authorization: req.headers.authorization })
+    const send = (status, code, data, msg = 'ok') => { res.writeHead(status, { 'content-type': 'application/json', 'retry-after': '2' }); res.end(JSON.stringify({ code, data, msg })) }
+    if (apiFailure) return send(apiFailure, 1, null, 'backend failure')
+    if (req.headers.authorization !== 'Bearer ic_good_test_key') return send(401, 1, null, 'invalid key')
+    if (req.method === 'GET' && req.url === '/api/v1/canvas/projects') return send(200, 0, projects)
+    if (req.method === 'POST' && req.url === '/api/v1/canvas/projects') {
+      const project = JSON.parse(raw).data
+      projects = [...projects.filter((p) => p.id !== project.id), project]
+      return send(200, 0, project)
     }
-    if (apiFailure) return send(apiFailure.status, apiFailure.body)
-    if (!authorized) return send(401, { code: 1, data: null, msg: '未登录或权限不足' })
-    if (req.method === 'GET' && req.url === '/api/v1/canvas/projects') {
-      return send(200, {
-        code: 0,
-        msg: 'ok',
-        data: [{ id: 'p1', title: '画布一', updatedAt: '2026-11-04T10:00:00.000Z', nodes: [{}, {}] }],
-      })
-    }
-    if (req.method === 'POST' && req.url === '/api/v1/canvas/projects') return send(200, { code: 0, msg: 'ok', data: {} })
-    return send(404, { code: 1, data: null, msg: '接口不存在' })
+    if (req.url === '/api/v1/videos') { res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ id: 'video-task-1', status: 'queued' })) }
+    if (req.url === '/api/v1/videos/video-task-1') { res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ id: 'video-task-1', status: 'failed', error: { message: 'provider failed' } })) }
+    if (req.url === '/api/v1/canvas/projects/delete') { const ids = JSON.parse(raw).ids; projects = projects.filter((p) => !ids.includes(p.id)); return send(200, 0, { deleted: true }) }
+    send(404, 1, null, 'missing route')
   })
 })
-await new Promise((resolve) => apiServer.listen(0, '127.0.0.1', resolve))
-const apiPort = apiServer.address().port
-const apiTokenPath = join(work, 'canvas-api.json')
-const bridged = makeHarness({
-  canvasBaseUrl: `http://127.0.0.1:${apiPort}`,
-  canvasId: '',
-  agentUrl: 'http://127.0.0.1:9',
-  autoStart: false,
-  settingsPath: join(work, 'settings-3.json'),
-  tokenFile,
-  canvasApiKeyFile: apiTokenPath,
-})
-
-res = await bridged.call('GET', '/infinite-canvas/state')
-check('no canvas API Key yet', res.json().apiKeyAvailable === false)
-res = await bridged.call('GET', '/infinite-canvas/projects')
-check('projects without a token → 400', res.status === 400, res.body.slice(0, 80))
-
-res = await bridged.call('POST', '/infinite-canvas/canvas-key', {
-  body: { key: 'ic_wrong_test_key' },
-  origin: 'http://127.0.0.1:62692',
-})
-check('a bad canvas API Key is rejected', res.status === 400, res.body.slice(0, 80))
-check('a rejected token is not stored', !existsSync(apiTokenPath))
-
-res = await bridged.call('POST', '/infinite-canvas/canvas-key', {
-  body: { key: 'ic_good_test_key' },
-  origin: 'http://127.0.0.1:62692',
-})
-check('a working token is verified and stored', res.status === 200 && res.json().apiKeyAvailable === true, res.body.slice(0, 80))
-check('the token file is private', (statSync(apiTokenPath).mode & 0o777) === 0o600, `mode=${(statSync(apiTokenPath).mode & 0o777).toString(8)}`)
-check('the state never leaks the canvas API Key', !res.body.includes('ic_good_test_key'))
-
-res = await bridged.call('POST', '/infinite-canvas/canvas-key', {
-  body: { key: 'infinite-canvas-auth-token-v1 ic_good_test_key' },
-  origin: 'http://127.0.0.1:62692',
-})
-check('browser session token pairs are rejected', res.status === 400, res.body.slice(0, 90))
-
-res = await bridged.call('POST', '/infinite-canvas/canvas-key', { body: { key: '' } })
-check('the token can be cleared', res.status === 200 && res.json().apiKeyAvailable === false)
-await bridged.call('POST', '/infinite-canvas/canvas-key', { body: { key: 'ic_good_test_key' } })
-
-res = await bridged.call('GET', '/infinite-canvas/projects')
-check('GET projects → 200', res.status === 200, res.body.slice(0, 90))
-const listed = res.json().projects
-check('projects are summarized', listed.length === 1 && listed[0].id === 'p1' && listed[0].nodeCount === 2, JSON.stringify(listed))
-check('cross-origin project read → 403', (await bridged.call('GET', '/infinite-canvas/projects', { origin: 'https://evil.example' })).status === 403)
-
-res = await bridged.call('POST', '/infinite-canvas/projects', { body: { title: '新画布' }, origin: 'http://127.0.0.1:62692' })
-check('POST projects → 200', res.status === 200, res.body.slice(0, 90))
-const created = res.json()
-check('created canvas has an id', typeof created.project.id === 'string' && created.project.id.length >= 10, created.project.id)
-check('created canvas keeps the title', created.project.title === '新画布')
-check('created canvas url points at its page', created.canvasUrl === `http://127.0.0.1:${apiPort}/canvas/${created.project.id}`, created.canvasUrl)
-const post = apiRequests.filter((entry) => entry.method === 'POST').pop()
-check('create posts the project shape the Web app uses', JSON.parse(post.body).data.id === created.project.id && JSON.stringify(JSON.parse(post.body).data).includes('"sidePanel"'))
-check('the created canvas becomes the pending target', created.pending !== null && created.pending.canvasId === created.project.id)
-
-res = await bridged.call('GET', '/infinite-canvas/state')
-check('state carries the pending target for the panel', res.json().pending !== null && res.json().pending.canvasId === created.project.id, JSON.stringify(res.json().pending))
-const bridgedSettings = (() => {
-  try {
-    return JSON.parse(readFileSync(join(work, 'settings-3.json'), 'utf8'))
-  } catch {
-    return {}
-  }
-})()
-check('the pending target is not written to settings', bridgedSettings.pending === undefined)
-
-res = await bridged.call('POST', '/infinite-canvas/target', { body: { canvasId: 'p1', blocked: true }, origin: 'http://127.0.0.1:62692' })
-check('a blocked automatic open is recorded', res.status === 200 && res.json().pending.blocked === true, JSON.stringify(res.json().pending))
-res = await bridged.call('GET', '/infinite-canvas/state')
-check('state reports the blocked pending canvas', res.json().pending.blocked === true && res.json().pending.canvasId === 'p1')
-
-res = await bridged.call('GET', '/infinite-canvas/open?canvas=p1')
-check('/open redirects to the canvas page', res.status === 302 && String(res.location).includes('/canvas/p1#'), `${res.status} ${String(res.location).slice(0, 60)}`)
-check('/open carries the agent handshake', String(res.location).includes('agentToken='))
-check('manual open clears the blocked handoff', (await bridged.call('GET', '/infinite-canvas/state')).json().pending === null)
-res = await bridged.call('GET', '/infinite-canvas/open?canvas=https://x/y')
-check('/open refuses a bad canvas id', res.status === 400)
-
-res = await bridged.call('POST', '/infinite-canvas/target', { body: { canvasId: '' }, origin: 'http://127.0.0.1:62692' })
-check('the pending target can be cleared', res.json().pending === null)
-check('cross-origin target → 403', (await bridged.call('POST', '/infinite-canvas/target', { body: { canvasId: 'p1' }, origin: 'https://evil.example' })).status === 403)
-
-res = await bridged.call('POST', '/infinite-canvas/link', { body: { canvasId: 'p1' }, origin: 'http://127.0.0.1:62692' })
-check('link can target one canvas without pinning it', res.status === 200 && res.json().canvasId === 'p1' && res.json().url.includes('/canvas/p1#'), res.body.slice(0, 90))
-check('an invalid canvas id is refused', (await bridged.call('POST', '/infinite-canvas/link', { body: { canvasId: 'https://x/y' } })).status === 400)
-
-const listValue = await bridged.projectsTool.execute({ action: 'list' }, { signal: new AbortController().signal })
-check('projects tool lists canvases', listValue.ok === true && listValue.projects.length === 1 && listValue.projects[0].id === 'p1')
-check('projects tool offers list, create and open', JSON.stringify(bridged.projectsTool.parameters.properties.action.enum) === '["list","create","open"]')
-const createValue = await bridged.projectsTool.execute({ action: 'create', title: 'MCP 新建' }, { signal: new AbortController().signal })
-check('projects tool creates a canvas', createValue.ok === true && createValue.created.title === 'MCP 新建' && createValue.created.canvasUrl.includes('/canvas/'))
-const afterCreate = await bridged.call('GET', '/infinite-canvas/state')
-check('a tool-created canvas is handed to the panel too', afterCreate.json().pending.canvasId === createValue.created.id)
-check('projects tool reports failures instead of throwing', (await bridged.projectsTool.execute({ action: 'list' }, { signal: new AbortController().signal })).ok === true)
-check('operation skill is registered automatically', bridged.skills.get('infinite-canvas')?.content.includes('get_canvas_summary'))
-const opened = await bridged.projectsTool.execute({ action: 'open', canvasId: 'p1' })
-check('open existing canvas succeeds without creating', opened.ok === true && (await bridged.call('GET', '/infinite-canvas/state')).json().pending.canvasId === 'p1')
-check('opening unknown canvas is rejected', (await bridged.projectsTool.execute({ action: 'open', canvasId: 'missing' })).ok === false)
-for (const [status, msg, expected] of [[401, 'bad', '已撤销'], [403, 'bad', '权限不足'], [429, 'bad', '频繁'], [200, 'business failed', 'business failed'], [503, 'temporary', 'temporary']]) {
-  apiFailure = { status, body: { code: 1, data: null, msg } }
-  const failed = await bridged.projectsTool.execute({ action: 'list' })
-  check(`HTTP ${status} error has actionable meaning`, !failed.ok && failed.error.includes(expected), failed.error)
+await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
+const baseUrl = `http://127.0.0.1:${server.address().port}`
+const apiKeyFile = join(work, 'canvas-api.json')
+const harness = makeHarness({ canvasBaseUrl: baseUrl, agentUrl: 'http://127.0.0.1:9', autoStart: false, tokenFile, settingsPath: join(work, 'settings.json'), canvasApiKeyFile: apiKeyFile })
+let res = await harness.call('GET', '/infinite-canvas/state')
+check('state excludes both API and Agent secrets', !res.body.includes('a'.repeat(64)) && res.json().apiKeyAvailable === false)
+check('native backend tools are registered without a MCP bridge', ['infinite_canvas_nodes', 'infinite_canvas_media', 'infinite_canvas_catalog'].every((name) => harness.tools.has(name)))
+check('the operation skill explains the independent launcher', harness.skills.get('infinite-canvas')?.content.includes('stopped web Agent is not an API failure'))
+res = await harness.call('POST', '/infinite-canvas/canvas-key', { body: { key: 'browser-session-token' } })
+check('session tokens are rejected', res.status === 400 && !existsSync(apiKeyFile))
+res = await harness.call('POST', '/infinite-canvas/canvas-key', { body: { key: 'ic_wrong' } })
+check('invalid keys are verified before saving', res.status === 400 && !existsSync(apiKeyFile))
+res = await harness.call('POST', '/infinite-canvas/canvas-key', { body: { key: 'Bearer ic_good_test_key', canvasBaseUrl: baseUrl } })
+check('valid API key saves without leaking its value', res.status === 200 && res.json().apiKeyAvailable && !res.body.includes('ic_good_test_key'))
+check('key file is private and bound to the deployment', (statSync(apiKeyFile).mode & 0o777) === 0o600 && JSON.parse(readFileSync(apiKeyFile)).baseUrl === baseUrl)
+res = await harness.call('GET', '/infinite-canvas/connection')
+check('backend connectivity is checked independently', res.json().connected === true)
+const status = await harness.tool.execute({})
+check('backend tools stay usable with the web Agent stopped', status.backend.connected && status.webAgent.optional && status.webAgent.phase === 'idle')
+let listed = await harness.projectsTool.execute({ action: 'list' })
+check('project list includes revisions and viewing URLs', listed.ok && listed.projects[0].revision && listed.projects[0].canvasUrl.includes('/canvas/p1'))
+const edited = await harness.tools.get('infinite_canvas_nodes').execute({ action: 'create_text', canvasId: 'p1', expectedRevision: listed.projects[0].revision, title: 'Headless edit', content: 'API without browser' })
+check('node write runs through the real HTTP API without Agent', edited.ok && projects[0].nodes[0].metadata.content === 'API without browser' && projects[0].untouched === 'preserve')
+const stale = await harness.tools.get('infinite_canvas_nodes').execute({ action: 'rename', canvasId: 'p1', expectedRevision: listed.projects[0].revision, nodeId: edited.nodeId, title: 'stale' })
+check('tool wraps version conflict as an actionable failure', stale.ok === false && stale.error.includes('expectedRevision'))
+const created = await harness.projectsTool.execute({ action: 'create', title: 'Created headlessly' })
+check('creation is read back and does not schedule browser navigation', created.ok && created.created.revision && !(await harness.call('GET', '/infinite-canvas/state')).json().pending)
+const opened = await harness.projectsTool.execute({ action: 'open', canvasId: 'p1' })
+check('open only returns an optional plain viewing URL', opened.ok && opened.browserRequired === false && !opened.canvasUrl.includes('agentToken'))
+res = await harness.call('POST', '/infinite-canvas/link', { body: { canvasId: 'p1' } })
+check('default viewing links contain no Agent handshake', !res.json().url.includes('agentToken'))
+res = await harness.call('POST', '/infinite-canvas/link', { body: { canvasId: 'p1', webAgent: true } })
+check('explicit web-Agent links retain the convenience handshake', res.json().url.includes('agentToken=') && !res.body.includes('ic_good_test_key'))
+for (const path of ['state', 'projects', 'agent', 'connection']) {
+  check(`cross-origin ${path} is rejected`, (await harness.call('GET', `/infinite-canvas/${path}`, { origin: 'https://evil.example' })).status === 403)
 }
-apiFailure = { status: 200, body: { code: 1, msg: 'echo ic_good_test_key' } }
-check('upstream error cannot echo key', !(await bridged.projectsTool.execute({ action: 'list' })).error.includes('ic_good_test_key'))
+check('cross-origin key changes are rejected', (await harness.call('POST', '/infinite-canvas/canvas-key', { origin: 'https://evil.example', body: { key: 'ic_fake' } })).status === 403)
+const beforeMedia = await harness.tools.get('infinite_canvas_nodes').execute({ action: 'summary', canvasId: 'p1' })
+const mediaNode = await harness.tools.get('infinite_canvas_nodes').execute({ action: 'create_media', canvasId: 'p1', expectedRevision: beforeMedia.project.revision, kind: 'video', title: 'Fake video only' })
+const submitted = await harness.tools.get('infinite_canvas_media').execute({ action: 'submit', canvasId: 'p1', nodeId: mediaNode.nodeId, expectedRevision: mediaNode.project.revision, channelId: 'test-channel', request: { model: 'fake-model', prompt: 'test' } })
+check('raw video task responses are accepted through the real HTTP adapter', submitted.ok && submitted.task.id === 'video-task-1')
+const synchronized = await harness.tools.get('infinite_canvas_media').execute({ action: 'sync', canvasId: 'p1', nodeId: mediaNode.nodeId, expectedRevision: submitted.project.revision })
+check('a failed video task can still sync its error instead of being treated as a malformed API response', synchronized.ok && projects.find((p) => p.id === 'p1').nodes.find((n) => n.id === mediaNode.nodeId).metadata.status === 'error')
+for (const [code, hint] of [[401, '已撤销'], [403, '权限不足'], [429, '频繁'], [503, 'backend failure']]) {
+  apiFailure = code
+  const value = await harness.projectsTool.execute({ action: 'list' })
+  check(`HTTP ${code} is distinguishable`, !value.ok && value.error.includes(hint))
+}
 apiFailure = null
-const callsBeforeChange = apiRequests.length
-await bridged.call('POST', '/infinite-canvas/settings', { body: { canvasBaseUrl: 'https://other.example' } })
-check('changing deployment makes old key unavailable', (await bridged.call('GET', '/infinite-canvas/state')).json().apiKeyAvailable === false)
-check('changed deployment cannot receive stored key', (await bridged.projectsTool.execute({ action: 'list' })).ok === false && apiRequests.length === callsBeforeChange)
-check('key configuration rejects cross-origin requests', (await bridged.call('POST', '/infinite-canvas/canvas-key', { origin: 'https://evil.example', body: { key: 'ic_fake' } })).status === 403)
-check('legacy session tokens are rejected', (await bridged.call('POST', '/infinite-canvas/canvas-key', { body: { key: 'jwt-session-token' } })).status === 400)
-check('remote plaintext key transport is rejected', (await bridged.call('POST', '/infinite-canvas/canvas-key', { body: { key: 'ic_fake', canvasBaseUrl: 'http://example.com' } })).status === 400)
-const renderedProjects = bridged.projectsTool.output.render({}, listValue)
-check('projects tool renders text content', Array.isArray(renderedProjects) && renderedProjects[0]?.text.includes('p1'))
+const before = calls.length
+await harness.call('POST', '/infinite-canvas/settings', { body: { canvasBaseUrl: 'https://other.example' } })
+listed = await harness.projectsTool.execute({ action: 'list' })
+check('changing deployment never sends its old key to another origin', !listed.ok && calls.length === before)
+check('remote plaintext Key transport is rejected', (await harness.call('POST', '/infinite-canvas/canvas-key', { body: { key: 'ic_fake', canvasBaseUrl: 'http://example.com' } })).status === 400)
+await harness.call('POST', '/infinite-canvas/settings', { body: { canvasBaseUrl: baseUrl } })
+check('invalid addresses are rejected', (await harness.call('POST', '/infinite-canvas/settings', { body: { canvasBaseUrl: 'ftp://example.com' } })).status === 400)
+await harness.dispose()
+check('runtime skill is removed on plugin unload', harness.skills.size === 0)
+server.close()
 
-await bridged.dispose()
-await new Promise((resolve) => apiServer.close(resolve))
-
-// ---------------------------------------------------------------------------
-const failed = checks.filter((entry) => !entry.ok)
-console.log(`\n${checks.length - failed.length}/${checks.length} checks passed`)
+// The convenience launcher remains functional but is not involved in the tests above.
+const managed = makeHarness({ canvasBaseUrl: baseUrl, agentUrl: 'http://127.0.0.1:43211', autoStart: false, agentCommand: process.execPath, agentArgs: [fakeAgent, '43211'], tokenFile, settingsPath: join(work, 'launcher.json') })
+res = await managed.call('POST', '/infinite-canvas/agent/start')
+check('optional launcher can start the local web Agent', res.status === 200 && res.json().running)
+res = await managed.call('GET', '/infinite-canvas/agent')
+check('launcher captures redacted logs', !JSON.stringify(res.json().log).includes('f'.repeat(64)))
+res = await managed.call('POST', '/infinite-canvas/agent/stop')
+check('optional launcher can stop its managed process', res.json().phase === 'stopped')
+await managed.dispose()
 rmSync(work, { recursive: true, force: true })
-if (failed.length > 0) process.exitCode = 1
+const failed = checks.filter((v) => !v.ok)
+console.log(`\n${checks.length - failed.length}/${checks.length} checks passed`)
+if (failed.length) process.exitCode = 1

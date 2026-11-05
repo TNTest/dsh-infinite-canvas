@@ -3,8 +3,7 @@
  *
  * There is no React and no browser here: a small hook runtime renders the whole
  * component tree of the single registered seat (`settings.section`) against a
- * stubbed `fetch`, then drives the background tab follower that `apply`
- * registers. A missing helper, a throwing component, or a bad effect fails here
+ * stubbed `fetch`, and exercises API configuration plus the optional web-Agent launcher. A missing helper, a throwing component, or a bad effect fails here
  * instead of showing a blank Settings page.
  *
  * Run with: node test/client.test.mjs
@@ -42,6 +41,7 @@ const ROUTES = {
     pending: { canvasId: 'fresh-canvas', title: '新画布' },
     defaults: { canvasBaseUrl: 'https://canvas.example.com', agentUrl: 'http://127.0.0.1:3210' },
   },
+  connection: { connected: true, projectCount: 1 },
   agent: {
     running: true,
     connected: true,
@@ -291,53 +291,12 @@ if (process.env.DEBUG_TREE === '1') console.log('TREE:', text.slice(-2200))
 check('the title and intro render', text.includes('settings.title') && text.includes('settings.intro'))
 check('the settings form renders', text.includes('form.baseUrl') && text.includes('form.save'))
 check('API Key form replaces session-token instructions', text.includes('form.key') && text.includes('form.keyHint') && !source.includes('localStorage') && !source.includes('TOKEN_SNIPPET'))
-check('connection facts render', text.includes('status.heading') && text.includes('status.tools'))
+check('backend readiness is distinct from the optional launcher', text.includes('status.backend') && text.includes('web.title') && text.includes('web.hint') && requests.includes('connection'))
 check('the start/stop control renders', text.includes('action.stopAgent') || text.includes('action.startAgent'))
 check('the canvas list renders', text.includes('projects.title') && text.includes('画布一') && text.includes('projects.open') && text.includes('canvas.example.com'))
-check('a pending canvas is announced', text.includes('panel.pending(title=新画布)'))
-check('the pending canvas gets its own credentialed link', text.includes('https://canvas.example.com/canvas/fresh-canvas#agentUrl='))
-
-// ---------------------------------------------------------------------------
-// 3. The background follower navigates the single canvas tab by name.
-// ---------------------------------------------------------------------------
-/** The follower's first poll uses a 2.5s delay; later polls are the newest timer. */
-const takeFollowerTick = () => {
-  const index = timers.findIndex((timer) => timer.ms === 2500)
-  if (index !== -1) return timers.splice(index, 1)[0].fn
-  return timers.pop()?.fn
-}
-
-const tick = takeFollowerTick()
-check('the tab follower scheduled a first poll', typeof tick === 'function')
-if (typeof tick === 'function') {
-  await tick()
-  await settle()
-}
-check('the follower opens the pending canvas', windowCalls.length === 1, JSON.stringify(windowCalls))
-check('it reuses the named canvas tab', windowCalls[0]?.name === 'dsh-infinite-canvas', windowCalls[0]?.name)
-check('it opens the credentialed link', String(windowCalls[0]?.url).includes('#agentUrl='), String(windowCalls[0]?.url).slice(0, 60))
-check('it clears the pending target afterwards', posts.some((post) => post.name === 'target' && post.body.canvasId === ''))
-
-// A browser that refuses the switch must report it, so the model can hand over a link.
-sandbox.window.open = () => null
-ROUTES.state.pending = { canvasId: 'blocked-canvas', title: '第二张', blocked: false }
-const nextTick = takeFollowerTick()
-check('the follower schedules its next poll', typeof nextTick === 'function')
-if (typeof nextTick === 'function') {
-  await nextTick()
-  await settle()
-}
-const blocked = posts.find((post) => post.name === 'target' && post.body !== null && post.body.blocked === true)
-check('a refused auto-open is reported back to the Host', blocked !== undefined && blocked.body.canvasId === 'blocked-canvas', JSON.stringify(blocked?.body ?? null))
-
-check('a blocked open keeps the follower polling', timers.some((timer) => timer.ms === 5000))
-const openCount = windowCalls.length
-ROUTES.state.pending = { canvasId: 'fresh-canvas', title: '重新打开', at: 2 }
-const reopenTick = takeFollowerTick()
-sandbox.window.open = (url, name) => { windowCalls.push({ url, name }); return { opener: null } }
-if (reopenTick) await reopenTick()
-await settle()
-check('the same canvas can be opened again on a new request', windowCalls.length === openCount + 1)
+check('legacy pending targets never trigger automatic browser navigation', windowCalls.length === 0 && !posts.some((p) => p.name === 'target'))
+check('viewing links remain plain, while web-Agent handshake is explicit', text.includes('https://canvas.example.com/canvas/p1') && !text.includes('https://canvas.example.com/canvas/p1#agentUrl'))
+check('the web-Agent connection link remains available', text.includes('web.open'))
 
 function findNode(node, predicate) {
   if (!node || typeof node !== 'object') return undefined
@@ -357,6 +316,7 @@ findNode(tree, (node) => node.type === 'form').props.onSubmit({ preventDefault()
 await settle()
 check('form verifies Key against the displayed deployment', posts.some((post) => post.name === 'canvas-key' && post.body.key === 'ic_client_test_key' && post.body.canvasBaseUrl === 'https://canvas.example.com'))
 
+check('only explicit checks contact the remote connection route', requests.filter((name) => name === 'connection').length <= 2)
 for (const dispose of disposers) dispose()
 
 const failed = checks.filter((entry) => !entry.ok)

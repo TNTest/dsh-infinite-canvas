@@ -1,20 +1,4 @@
-/**
- * Browser half of the Infinite Canvas bundle.
- *
- * Registers exactly one seat — `settings.section`, the page in the Settings
- * dialog — plus a background effect that follows the Host's pending canvas and
- * navigates the single canvas tab to it. There is no workspace panel: the canvas
- * is a page in the browser, and this bundle only configures and connects it.
- *
- * The canvas is a third-party Web application served by a deployment the user
- * configures, and it is deliberately NOT embedded. A cross-site iframe cannot
- * carry that site's login session (third-party cookie isolation), so the canvas
- * app would render its login screen, never start, and never reach the local
- * agent. The panel therefore opens the real canvas in an ordinary browser tab
- * with the agent URL and token in the address hash — the handshake the official
- * `canvas-agent open` performs. The surrounding chrome is ordinary Harness UI
- * styled with theme tokens.
- */
+/** Settings for backend API access and an independent optional web-Agent launcher. */
 window.__ModuleLoader__.load({
   id: 'dsh-infinite-canvas',
   factory(require) {
@@ -26,13 +10,6 @@ window.__ModuleLoader__.load({
     const NS = 'infinite-canvas'
     const API_ROOT = '/infinite-canvas'
 
-    /**
-     * One named browsing context for the canvas, so "open canvas" navigates the
-     * same tab instead of piling up tabs. Two connected canvases leave the agent
-     * unable to tell which one is meant, so the tab must stay singular.
-     */
-    const CANVAS_TAB = 'dsh-infinite-canvas'
-
     const MESSAGES = {
   "nav.label": [
     "无限画布",
@@ -43,24 +20,12 @@ window.__ModuleLoader__.load({
     "Infinite Canvas"
   ],
   "settings.intro": [
-    "连接画布站，让智能体在画布上工作。",
-    "Connect your canvas and let the agent work on it."
+    "通过 API 直接操作已保存的画布；网页端 Agent 可独立启动。",
+    "Work on saved canvases through the API; launch the web Agent independently."
   ],
   "open.button": [
-    "打开画布",
-    "Open canvas"
-  ],
-  "action.refresh": [
-    "刷新状态",
-    "Refresh status"
-  ],
-  "panel.pending": [
-    "等待打开：{title}",
-    "Ready to open: {title}"
-  ],
-  "panel.blocked": [
-    "浏览器阻止了自动打开，请点击链接继续。",
-    "The browser blocked automatic opening. Use the link to continue."
+    "查看画布",
+    "View canvases"
   ],
   "form.heading": [
     "站点连接",
@@ -75,8 +40,8 @@ window.__ModuleLoader__.load({
     "User API Key"
   ],
   "form.keyHint": [
-    "在画布站「账户 → API Key」创建；读取需 read，新建需 read + write。",
-    "Create it in the canvas account → API Key. Listing needs read; creating needs read + write."
+    "在画布站「账户 → API Key」创建；读取需 read，编辑需 read + write，生成另需 generate。",
+    "Create it in Account → API Key. Reading needs read; editing needs read + write; generation also needs generate."
   ],
   "form.keyPresent": [
     "已保存，留空保留",
@@ -110,10 +75,6 @@ window.__ModuleLoader__.load({
     "Key 仅在本机保存，直接由插件请求已配置的站点。",
     "The key is stored locally and sent by the plugin to the configured site."
   ],
-  "form.advanced": [
-    "高级设置",
-    "Advanced settings"
-  ],
   "form.agentUrl": [
     "本地 Agent 地址",
     "Local agent URL"
@@ -129,14 +90,6 @@ window.__ModuleLoader__.load({
   "status.heading": [
     "连接状态",
     "Connection"
-  ],
-  "status.agent": [
-    "本地 Agent",
-    "Local agent"
-  ],
-  "status.canvas": [
-    "画布连接",
-    "Canvas connection"
   ],
   "status.key": [
     "API Key",
@@ -157,14 +110,6 @@ window.__ModuleLoader__.load({
   "status.missing": [
     "待配置",
     "Needs setup"
-  ],
-  "status.tools": [
-    "{count} 个画布工具可用",
-    "{count} canvas tools available"
-  ],
-  "status.hint": [
-    "画布编辑需要在浏览器打开一张画布；只保留一个连接的标签页。",
-    "Live editing needs one canvas open in the browser. Keep only one connected tab."
   ],
   "status.log": [
     "诊断日志",
@@ -217,9 +162,52 @@ window.__ModuleLoader__.load({
   "projects.untitled": [
     "未命名画布",
     "Untitled canvas"
+  ],
+  "status.backend": [
+    "后端 API",
+    "Backend API"
+  ],
+  "status.backendHint": [
+    "节点、连线和布局操作无需浏览器或本地 Agent。网页已打开时，请先保存改动，API 操作完成后刷新查看。",
+    "Node, connection and layout tools need no browser or local Agent. Save browser edits first, then reload after API edits."
+  ],
+  "status.testing": [
+    "检查连接",
+    "Check connection"
+  ],
+  "web.title": [
+    "网页端本地 Agent（可选）",
+    "Local Agent for the web app (optional)"
+  ],
+  "web.hint": [
+    "供画布网页右侧的本地智能体使用，和后端 API 工具独立运行。",
+    "For the local assistant in the canvas web app. Runs independently of backend API tools."
+  ],
+  "web.open": [
+    "打开网页并连接 Agent",
+    "Open web app with Agent"
+  ],
+  "web.options": [
+    "网页端连接选项",
+    "Web connection options"
+  ],
+  "web.save": [
+    "保存启动选项",
+    "Save launch options"
+  ],
+  "web.running": [
+    "已启动",
+    "Running"
+  ],
+  "web.stopped": [
+    "未启动，不影响 API 操作",
+    "Stopped; API tools remain available"
+  ],
+  "form.agentHint": [
+    "网页端连接地址，后端 API 操作不使用此地址。",
+    "Connection address for the web app; backend API tools do not use it."
   ]
 }
-    MESSAGES['form.agentHint'] = ['更改端口后，也需在 MCP 行配置中同步 CANVAS_AGENT_PORT 并重启 Harness。', 'When changing the port, also update CANVAS_AGENT_PORT in the MCP row and restart Harness.']
     const DICTIONARIES = Object.fromEntries(['zh', 'en'].map((lang, index) =>
       [lang, Object.fromEntries(Object.entries(MESSAGES).map(([key, value]) => [key, value[index]]))],
     ))
@@ -251,7 +239,7 @@ window.__ModuleLoader__.load({
 .dsh-ic-check input{accent-color:var(--dsw-alias-brand-primary)}
 .dsh-ic-error{margin:0;color:var(--dsw-alias-state-error-primary);font-size:12px;overflow-wrap:anywhere}
 .dsh-ic-ok{margin:0;color:var(--dsw-alias-state-success-primary);font-size:12px}
-.dsh-ic-status{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.dsh-ic-status{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
 .dsh-ic-status-item{padding:11px 13px;background:var(--dsw-alias-bg-layer-1);border-radius:11px;min-width:0}
 .dsh-ic-status-value{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600;margin-top:5px}
 .dsh-ic-dot{width:6px;height:6px;border-radius:50%;background:var(--dsw-alias-label-secondary);flex-shrink:0}
@@ -294,13 +282,14 @@ window.__ModuleLoader__.load({
 
     const readState = () => callApi('state')
     const readAgent = () => callApi('agent')
+    const readConnection = () => callApi('connection')
     const saveSettings = (patch) =>
       callApi('settings', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(patch),
       })
-    const readLink = () => callApi('link', { method: 'POST' })
+    const readLink = () => callApi('link', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ webAgent: true }) })
     const readProjects = () => callApi('projects')
     const saveCanvasKey = (key, canvasBaseUrl) =>
       callApi('canvas-key', {
@@ -315,6 +304,7 @@ window.__ModuleLoader__.load({
       const [state, setState] = useState(null)
       const [agent, setAgent] = useState(null)
       const [link, setLink] = useState(null)
+      const [connection, setConnection] = useState(null)
       const [error, setError] = useState('')
       const alive = useRef(true)
       const refresh = useCallback(async () => {
@@ -346,6 +336,12 @@ window.__ModuleLoader__.load({
         }
       }, [])
 
+      const testConnection = useCallback(async () => {
+        try { const result = await readConnection(); if (alive.current) setConnection(result) }
+        catch (error) { if (alive.current) setConnection({ connected: false, error: error.message }) }
+      }, [])
+      useEffect(() => { void testConnection() }, [testConnection])
+
       /** Poll faster while the agent is coming up, slowly otherwise. */
       useEffect(() => {
         alive.current = true
@@ -374,59 +370,11 @@ window.__ModuleLoader__.load({
         }
       }, [])
 
-      return { state, agent, link, error, refresh, act, setState }
+      return { state, agent, link, connection, error, refresh, testConnection, act, setState }
     }
 
-    /**
-     * An anchor that targets the single canvas tab. A plain named `target`
-     * already makes the browser reuse that tab; the click handler does the same
-     * through `window.open` so the opener link can be dropped explicitly.
-     * Modified clicks (⌘/Ctrl/Shift/middle) are left to the browser.
-     */
-    function CanvasLink({ href, className, children, onBeforeOpen }) {
-      const onClick = (event) => {
-        if (event.defaultPrevented) return
-        if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
-        event.preventDefault()
-        if (typeof onBeforeOpen === 'function') {
-          try {
-            onBeforeOpen()
-          } catch {
-            // Remembering the target must never block opening it.
-          }
-        }
-        let opened = null
-        try {
-          opened = window.open(href, CANVAS_TAB)
-        } catch {
-          opened = null
-        }
-        if (opened === null) {
-          window.location.assign(href)
-          return
-        }
-        try {
-          opened.opener = null
-        } catch {
-          // Cross-origin assignment is not always allowed; the name still works.
-        }
-        try {
-          opened.focus()
-        } catch {
-          // Focus is best effort.
-        }
-      }
-      return h(
-        'a',
-        {
-          className,
-          href,
-          target: CANVAS_TAB,
-          rel: 'noopener',
-          onClick,
-        },
-        children,
-      )
+    function CanvasLink({ href, className, children }) {
+      return h('a', { className, href, target: '_blank', rel: 'noopener noreferrer' }, children)
     }
 
     function Field({ label, hint, htmlFor, children }) {
@@ -442,9 +390,6 @@ window.__ModuleLoader__.load({
     function SettingsForm({ t, state, onSaved }) {
       const uid = useId()
       const [baseUrl, setBaseUrl] = useState('')
-      const [agentUrl, setAgentUrl] = useState('')
-      const [autoStart, setAutoStart] = useState(true)
-      const [embed, setEmbed] = useState(true)
       const [key, setKey] = useState('')
       const [dirty, setDirty] = useState(false)
       const [busy, setBusy] = useState(false)
@@ -455,9 +400,6 @@ window.__ModuleLoader__.load({
       useEffect(() => {
         if (!state || dirty) return
         setBaseUrl(state.canvasBaseUrl)
-        setAgentUrl(state.agentUrl)
-        setAutoStart(state.autoStart !== false)
-        setEmbed(state.embedCredentials !== false)
       }, [state, dirty])
       const change = (setter) => (event) => {
         setDirty(true)
@@ -474,7 +416,7 @@ window.__ModuleLoader__.load({
           } else {
             if (key.trim()) await saveCanvasKey(key, baseUrl)
             else if (!configured) throw new Error(t('form.keyMissing'))
-            onSaved(await saveSettings({ canvasBaseUrl: baseUrl, agentUrl, autoStart, embedCredentials: embed }))
+            onSaved(await saveSettings({ canvasBaseUrl: baseUrl }))
           }
           setKey('')
           setDirty(false)
@@ -493,13 +435,6 @@ window.__ModuleLoader__.load({
           h('input', { id: `${uid}-key`, type: 'password', className: 'dsh-ic-input', value: key, spellCheck: false, autoComplete: 'off', placeholder: t(configured ? 'form.keyPresent' : 'form.keyMissing'), onChange: change(setKey) })),
         envKey ? h('p', { className: 'dsh-ic-muted' }, t('form.env')) : null,
         h('p', { className: 'dsh-ic-muted' }, t('form.privacy')),
-        h('details', null,
-          h('summary', null, t('form.advanced')),
-          h('div', { className: 'dsh-ic-details-body' },
-            h(Field, { label: t('form.agentUrl'), htmlFor: `${uid}-agent`, hint: t('form.agentHint') },
-              h('input', { id: `${uid}-agent`, type: 'url', required: true, className: 'dsh-ic-input', value: agentUrl, onChange: change(setAgentUrl) })),
-            h('label', { className: 'dsh-ic-check' }, h('input', { type: 'checkbox', checked: autoStart, onChange: change(setAutoStart) }), t('form.autoStart')),
-            h('label', { className: 'dsh-ic-check' }, h('input', { type: 'checkbox', checked: embed, onChange: change(setEmbed) }), t('form.embed')))),
         failure ? h('p', { className: 'dsh-ic-error', role: 'alert' }, failure) : null,
         message ? h('p', { className: 'dsh-ic-ok', role: 'status' }, message) : null,
         h('div', { className: 'dsh-ic-row' },
@@ -508,16 +443,54 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function StatusList({ t, state, agent }) {
+    function StatusList({ t, state, connection }) {
       const rows = [
         ['status.key', state?.apiKeyAvailable, 'status.configured', 'status.missing'],
-        ['status.agent', agent?.running, 'status.yes', 'status.no'],
-        ['status.canvas', agent?.connected, 'status.yes', 'status.no'],
+        ['status.backend', connection?.connected, 'status.yes', 'status.no'],
       ]
       return h('div', { className: 'dsh-ic-status', 'aria-label': t('status.heading') },
         rows.map(([label, ready, yes, no]) => h('div', { className: 'dsh-ic-status-item', key: label },
           h('span', { className: 'dsh-ic-muted' }, t(label)),
           h('span', { className: 'dsh-ic-status-value' }, h('span', { className: `dsh-ic-dot${ready ? ' dsh-ic-dot--ready' : ''}`, 'aria-hidden': true }), t(ready ? yes : no)))))
+    }
+
+    function WebAgentSection({ t, state, agent, link, act, onSaved }) {
+      const uid = useId()
+      const [agentUrl, setAgentUrl] = useState('')
+      const [autoStart, setAutoStart] = useState(true)
+      const [embed, setEmbed] = useState(true)
+      const [dirty, setDirty] = useState(false)
+      const [busy, setBusy] = useState(false)
+      const [failure, setFailure] = useState('')
+      useEffect(() => {
+        if (!state || dirty) return
+        setAgentUrl(state.agentUrl); setAutoStart(state.autoStart !== false); setEmbed(state.embedCredentials !== false)
+      }, [state, dirty])
+      const save = async (event) => {
+        event.preventDefault(); setBusy(true); setFailure('')
+        try { onSaved(await saveSettings({ agentUrl, autoStart, embedCredentials: embed })); setDirty(false) }
+        catch (error) { setFailure(error.message) }
+        finally { setBusy(false) }
+      }
+      return h('section', { className: 'dsh-ic-card' },
+        h('h3', { className: 'dsh-ic-title' }, t('web.title')),
+        h('p', { className: 'dsh-ic-muted' }, t('web.hint')),
+        h('p', { className: 'dsh-ic-muted', role: 'status' }, t(agent?.running ? 'web.running' : 'web.stopped')),
+        h('div', { className: 'dsh-ic-row' },
+          agent?.phase === 'starting' ? h('button', { type: 'button', className: 'dsh-ic-button', disabled: true }, t('status.starting'))
+          : agent?.running && agent.managed ? h('button', { type: 'button', className: 'dsh-ic-button', onClick: () => void act('stop') }, t('action.stopAgent'))
+          : agent?.phase === 'external' ? h('span', { className: 'dsh-ic-muted' }, t('status.external'))
+          : h('button', { type: 'button', className: 'dsh-ic-button', onClick: () => void act('start') }, t('action.startAgent')),
+          agent?.running && link?.url ? h(CanvasLink, { className: 'dsh-ic-button', href: link.url }, t('web.open')) : null),
+        h('details', null, h('summary', null, t('web.options')),
+          h('form', { className: 'dsh-ic-details-body', onSubmit: save },
+            h(Field, { label: t('form.agentUrl'), hint: t('form.agentHint'), htmlFor: `${uid}-agent` },
+              h('input', { className: 'dsh-ic-input', id: `${uid}-agent`, type: 'url', required: true, value: agentUrl, onChange: (e) => { setDirty(true); setAgentUrl(e.target.value) } })),
+            h('label', { className: 'dsh-ic-check' }, h('input', { type: 'checkbox', checked: autoStart, onChange: (e) => { setDirty(true); setAutoStart(e.target.checked) } }), t('form.autoStart')),
+            h('label', { className: 'dsh-ic-check' }, h('input', { type: 'checkbox', checked: embed, onChange: (e) => { setDirty(true); setEmbed(e.target.checked) } }), t('form.embed')),
+            failure ? h('p', { className: 'dsh-ic-error', role: 'alert' }, failure) : null,
+            h('button', { type: 'submit', className: 'dsh-ic-button', disabled: busy || !state }, t('web.save')))),
+        h('details', null, h('summary', null, t('status.log')), h('pre', { className: 'dsh-ic-log' }, [agent?.error, ...(agent?.log ?? [])].filter(Boolean).join('\n'))))
     }
 
     function ProjectList({ t, state, link }) {
@@ -555,14 +528,8 @@ window.__ModuleLoader__.load({
                 h('div', { style: { minWidth: 0, flex: 1 } },
                   h('div', { className: 'dsh-ic-project-title', title: project.title }, project.title || t('projects.untitled')),
                   h('p', { className: 'dsh-ic-muted' }, t('projects.nodes', { count: project.nodeCount }))),
-                h(CanvasLink, { className: 'dsh-ic-button', href: withCanvasId(openLinkOf(link, state), project.id) }, t('projects.open')))))
+                h(CanvasLink, { className: 'dsh-ic-button', href: withCanvasId(state?.canvasUrl, project.id) }, t('projects.open')))))
           : h('p', { className: 'dsh-ic-muted' }, t('projects.empty')))
-    }
-
-    /** The credentialed link the Host built, or the plain list url. */
-    function openLinkOf(link, state) {
-      if (link !== null && typeof link.url === 'string' && link.url !== '') return link.url
-      return state !== null && typeof state.canvasUrl === 'string' ? state.canvasUrl : ''
     }
 
     /** The credentialed link for one canvas, reusing the hash the Host built. */
@@ -578,35 +545,22 @@ window.__ModuleLoader__.load({
     }
 
     function SettingsSection({ t }) {
-      const { state, agent, link, error, refresh, act, setState } = useCanvas()
-      const openUrl = openLinkOf(link, state)
-      const pending = state?.pending
-      const pendingUrl = pending?.canvasId ? withCanvasId(openUrl, pending.canvasId) : ''
+      const { state, agent, link, connection, error, refresh, testConnection, act, setState } = useCanvas()
+      const onSaved = (next) => { setState(next); void refresh(); void testConnection() }
       return h('div', { className: 'dsh-ic-page' }, h(Styles),
         h('div', { className: 'dsh-ic-section' },
           h('header', { className: 'dsh-ic-header' },
             h('div', null, h('h2', { className: 'dsh-ic-title' }, t('settings.title')), h('p', { className: 'dsh-ic-muted' }, t('settings.intro'))),
-            openUrl ? h(CanvasLink, { className: 'dsh-ic-button dsh-ic-button--primary', href: openUrl }, t('open.button')) : null),
-          h(StatusList, { t, state, agent }),
-          pendingUrl ? h('div', { className: 'dsh-ic-row' },
-            h('p', { className: 'dsh-ic-muted' }, t('panel.pending', { title: pending.title || pending.canvasId })),
-            h(CanvasLink, { className: 'dsh-ic-button', href: pendingUrl }, t('open.button')),
-            pending.blocked ? h('p', { className: 'dsh-ic-muted' }, t('panel.blocked')) : null) : null,
+            h('div', { className: 'dsh-ic-actions' },
+              h('button', { type: 'button', className: 'dsh-ic-button', onClick: () => void testConnection() }, t('status.testing')),
+              state?.canvasUrl ? h(CanvasLink, { className: 'dsh-ic-button', href: state.canvasUrl }, t('open.button')) : null)),
+          h(StatusList, { t, state, connection }),
+          h('p', { className: 'dsh-ic-muted' }, t('status.backendHint')),
+          connection?.error ? h('p', { className: 'dsh-ic-error', role: 'alert' }, connection.error) : null,
           error ? h('p', { className: 'dsh-ic-error', role: 'alert' }, error) : null,
-          h(SettingsForm, { t, state, onSaved: (next) => { setState(next); void refresh() } }),
-          h(ProjectList, { t, state, link }),
-          h('section', { className: 'dsh-ic-card' },
-            h('div', { className: 'dsh-ic-bar' }, h('h3', { className: 'dsh-ic-title' }, t('status.heading')),
-              h('span', { className: 'dsh-ic-spacer' }),
-              h('button', { type: 'button', className: 'dsh-ic-button', onClick: () => void refresh() }, t('action.refresh'))),
-            h('p', { className: 'dsh-ic-muted' }, agent?.connected ? t('status.tools', { count: agent.tools.length }) : t('status.hint')),
-            h('div', { className: 'dsh-ic-row' },
-              agent?.phase === 'starting' ? h('button', { type: 'button', className: 'dsh-ic-button', disabled: true }, t('status.starting'))
-                : agent?.managed && agent.running ? h('button', { type: 'button', className: 'dsh-ic-button', onClick: () => void act('stop') }, t('action.stopAgent'))
-                : agent?.phase === 'external' ? h('span', { className: 'dsh-ic-muted' }, t('status.external'))
-                : h('button', { type: 'button', className: 'dsh-ic-button', onClick: () => void act('start') }, t('action.startAgent'))),
-            h('details', null, h('summary', null, t('status.log')),
-              h('pre', { className: 'dsh-ic-log' }, [agent?.error, ...(agent?.log ?? [])].filter(Boolean).join('\n'))))))
+          h(SettingsForm, { t, state, onSaved }),
+          h(WebAgentSection, { t, state, agent, link, act, onSaved }),
+          h(ProjectList, { t, state, link: null })))
     }
 
 
@@ -616,54 +570,6 @@ window.__ModuleLoader__.load({
       apply(ctx) {
         ctx.effect(() => ctx.locale.register(NS, DICTIONARIES), 'dsh-infinite-canvas: dictionaries')
         const t = ctx.locale.bind(NS)
-
-        /**
-         * The canvas tab follower. It lives here, not in a panel, because this
-         * bundle loads with the app (`client.immediately`): when the Host leaves
-         * a pending canvas, this navigates the single named canvas tab to it —
-         * navigating an already-open named window needs no user gesture, so the
-         * agent keeps exactly one canvas session and no second tab appears.
-         */
-        ctx.effect(() => {
-          let alive = true
-          let timer
-          let lastHandled = ''
-          const tick = async () => {
-            if (!alive) return
-            try {
-              const state = await readState()
-              const pending = state?.pending
-              const canvasId = typeof pending?.canvasId === 'string' ? pending.canvasId : ''
-              const revision = `${canvasId}:${pending?.at ?? ''}`
-              if (canvasId && !pending.blocked && revision !== lastHandled) {
-                const payload = await callApi('link', {
-                  method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ canvasId }),
-                })
-                if (payload?.url && alive) {
-                  const opened = window.open(payload.url, CANVAS_TAB)
-                  await callApi('target', {
-                    method: 'POST', headers: { 'content-type': 'application/json' },
-                    body: JSON.stringify(opened === null ? { canvasId, title: pending.title, blocked: true } : { canvasId: '' }),
-                  })
-                  // A blocked report gets a new timestamp on Host; do not retry it automatically.
-                  lastHandled = revision
-                  if (opened !== null) {
-                    try { opened.opener = null } catch { /* Cross-origin window. */ }
-                  }
-                }
-              }
-            } catch {
-              // Retry transient Host failures on the next poll.
-            } finally {
-              if (alive) timer = setTimeout(() => void tick(), 5000)
-            }
-          }
-          timer = setTimeout(() => void tick(), 2500)
-          return () => {
-            alive = false
-            clearTimeout(timer)
-          }
-        }, 'dsh-infinite-canvas: canvas tab follower')
 
         ctx.slots.inject('settings.section', () =>
           ctx.slots.register(
